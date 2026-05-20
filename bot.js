@@ -17,7 +17,7 @@ import { execSync } from "child_process";
 // ─── Onboarding ───────────────────────────────────────────────────────────────
 
 function checkOnboarding() {
-  const required = ["BITGET_API_KEY", "BITGET_SECRET_KEY", "BITGET_PASSPHRASE"];
+  const required = ["BITGET_API_KEY", "BITGET_SECRET_KEY"];
   const missing = required.filter((k) => !process.env[k]);
 
   if (!existsSync(".env")) {
