@@ -4,7 +4,7 @@
   "description": "Automated trading bot — Claude + TradingView strategy + BitGet execution",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js",
+    "start": "node worker.js",
     "dev": "node bot.js",
     "dashboard": "node dashboard/server.cjs"
   },

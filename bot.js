@@ -616,11 +616,16 @@ async function run() {
   console.log("═══════════════════════════════════════════════════════════\n");
 }
 
-if (process.argv.includes("--tax-summary")) {
-  generateTaxSummary();
-} else {
-  run().catch((err) => {
-    console.error("Bot error:", err);
-    process.exit(1);
-  });
+export { run };
+
+const isMain = process.argv[1] && process.argv[1].endsWith("bot.js");
+if (isMain) {
+  if (process.argv.includes("--tax-summary")) {
+    generateTaxSummary();
+  } else {
+    run().catch((err) => {
+      console.error("Bot error:", err);
+      process.exit(1);
+    });
+  }
 }
