@@ -21,9 +21,9 @@ function checkOnboarding() {
   const missing = required.filter((k) => !process.env[k]);
 
   if (missing.length > 0) {
-    console.log(`\n⚠️  Missing credentials: ${missing.join(", ")}`);
-    console.log("Set them in your .env file or as environment variables.\n");
-    process.exit(0);
+    const msg = `Missing credentials: ${missing.join(", ")}`;
+    console.log(`\n⚠️  ${msg}\n`);
+    throw new Error(msg);
   }
 
   // Always print the CSV location so users know where to find their trade log
