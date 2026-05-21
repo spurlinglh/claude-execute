@@ -14,6 +14,78 @@ import { readFileSync, writeFileSync, existsSync, appendFileSync } from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 
+// ─── Google Sheets ────────────────────────────────────────────────────────────
+
+async function getGoogleAccessToken() {
+  const email = process.env.GOOGLE_CLIENT_EMAIL;
+  const key = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  if (!email || !key) return null;
+
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const now = Math.floor(Date.now() / 1000);
+  const claim = Buffer.from(JSON.stringify({
+    iss: email, scope: "https://www.googleapis.com/auth/spreadsheets",
+    aud: "https://oauth2.googleapis.com/token", exp: now + 3600, iat: now,
+  })).toString("base64url");
+
+  const sign = crypto.createSign("RSA-SHA256");
+  sign.update(`${header}.${claim}`);
+  const signature = sign.sign(key, "base64url");
+  const jwt = `${header}.${claim}.${signature}`;
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
+  });
+  const data = await res.json();
+  return data.access_token || null;
+}
+
+async function appendToSheet(values) {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) return;
+  try {
+    const token = await getGoogleAccessToken();
+    if (!token) return;
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1:append?valueInputOption=USER_ENTERED`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ values: [values] }),
+      }
+    );
+    console.log("Google Sheet updated ✓");
+  } catch (err) {
+    console.log(`Google Sheet update failed: ${err.message}`);
+  }
+}
+
+async function ensureSheetHeaders() {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) return;
+  try {
+    const token = await getGoogleAccessToken();
+    if (!token) return;
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const data = await res.json();
+    if (!data.values) {
+      await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1?valueInputOption=USER_ENTERED`,
+        {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ values: [["Date", "Time (UTC)", "Symbol", "Action", "Entry Price", "Exit Price", "Size USD", "P&L USD", "P&L %", "Mode", "Notes"]] }),
+        }
+      );
+    }
+  } catch {}
+}
+
 // ─── Onboarding ───────────────────────────────────────────────────────────────
 
 function checkOnboarding() {
@@ -540,6 +612,7 @@ function generateTaxSummary() {
 async function run() {
   checkOnboarding();
   initCsv();
+  await ensureSheetHeaders();
   console.log("═══════════════════════════════════════════════════════════");
   console.log("  Claude Trading Bot");
   console.log(`  ${new Date().toISOString()}`);
@@ -626,6 +699,19 @@ async function run() {
       saveLog(log);
       writeTradeCsv(exitEntry);
       clearPosition();
+      const pnlSign = exitEntry.pnlUSD >= 0 ? "+" : "";
+      await appendToSheet([
+        new Date().toISOString().slice(0, 10),
+        new Date().toISOString().slice(11, 19),
+        CONFIG.symbol, "EXIT",
+        exitEntry.entryPrice.toFixed(2),
+        exitEntry.exitPrice.toFixed(2),
+        exitEntry.sizeUSD.toFixed(2),
+        `${pnlSign}${exitEntry.pnlUSD.toFixed(2)}`,
+        `${pnlSign}${exitEntry.pnlPct.toFixed(3)}%`,
+        CONFIG.paperTrading ? "PAPER" : "LIVE",
+        `Exit: ${exitEntry.exitReason}`,
+      ]);
       console.log(`\nDecision log saved → ${LOG_FILE}`);
       console.log("═══════════════════════════════════════════════════════════\n");
       return;
@@ -709,6 +795,14 @@ async function run() {
         orderId: logEntry.orderId,
       });
       console.log(`   Position saved — will check exit conditions next run`);
+      await appendToSheet([
+        new Date().toISOString().slice(0, 10),
+        new Date().toISOString().slice(11, 19),
+        CONFIG.symbol, "ENTRY",
+        price.toFixed(2), "", tradeSize.toFixed(2), "", "",
+        CONFIG.paperTrading ? "PAPER" : "LIVE",
+        `Stop loss: $${stopLoss.toFixed(2)}`,
+      ]);
     }
   }
 
