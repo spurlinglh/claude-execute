@@ -281,6 +281,71 @@ function checkTradeLimits(log) {
   return true;
 }
 
+// ─── Position Tracking ───────────────────────────────────────────────────────
+
+const POSITION_FILE = "position.json";
+
+function loadPosition() {
+  if (!existsSync(POSITION_FILE)) return null;
+  try {
+    return JSON.parse(readFileSync(POSITION_FILE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function savePosition(position) {
+  writeFileSync(POSITION_FILE, JSON.stringify(position, null, 2));
+}
+
+function clearPosition() {
+  if (existsSync(POSITION_FILE)) writeFileSync(POSITION_FILE, "null");
+}
+
+// ─── Exit Check ──────────────────────────────────────────────────────────────
+
+function checkExitConditions(position, price, ema8, vwap, rsi3) {
+  const results = [];
+  const isLong = position.side === "long";
+
+  console.log("\n── Exit Check ───────────────────────────────────────────\n");
+  console.log(`  Open ${isLong ? "LONG" : "SHORT"} from $${position.entryPrice.toFixed(2)}`);
+
+  const check = (label, hit) => {
+    results.push({ label, hit });
+    console.log(`  ${hit ? "✅" : "  "} ${label}`);
+  };
+
+  const stopHit = isLong
+    ? price <= position.stopLoss
+    : price >= position.stopLoss;
+  check(`Hard stop hit (${position.stopLoss.toFixed(2)})`, stopHit);
+
+  if (isLong) {
+    check("RSI(3) crossed back above 50", rsi3 > 50);
+    check("Price touched VWAP", Math.abs(price - vwap) / vwap < 0.001);
+    check("Price crossed below EMA(8)", price < ema8);
+  } else {
+    check("RSI(3) crossed back below 50", rsi3 < 50);
+    check("Price touched VWAP", Math.abs(price - vwap) / vwap < 0.001);
+    check("Price crossed above EMA(8)", price > ema8);
+  }
+
+  const shouldExit = results.some((r) => r.hit);
+  const reason = results.find((r) => r.hit)?.label || "";
+  return { shouldExit, reason, results };
+}
+
+function calcPnL(position, exitPrice) {
+  const isLong = position.side === "long";
+  const priceDiff = isLong
+    ? exitPrice - position.entryPrice
+    : position.entryPrice - exitPrice;
+  const pnlUSD = (priceDiff / position.entryPrice) * position.sizeUSD;
+  const pnlPct = (priceDiff / position.entryPrice) * 100;
+  return { pnlUSD, pnlPct };
+}
+
 // ─── BitGet Execution ────────────────────────────────────────────────────────
 
 function signBitGet(timestamp, method, path, body = "") {
@@ -354,10 +419,13 @@ const CSV_HEADERS = [
   "Symbol",
   "Side",
   "Quantity",
-  "Price",
+  "Entry Price",
+  "Exit Price",
   "Total USD",
   "Fee (est.)",
   "Net Amount",
+  "P&L USD",
+  "P&L %",
   "Order ID",
   "Mode",
   "Notes",
@@ -370,14 +438,30 @@ function writeTradeCsv(logEntry) {
 
   let side = "";
   let quantity = "";
+  let entryPrice = "";
+  let exitPrice = "";
   let totalUSD = "";
   let fee = "";
   let netAmount = "";
+  let pnlUSD = "";
+  let pnlPct = "";
   let orderId = "";
-  let mode = "";
+  let mode = logEntry.paperTrading ? "PAPER" : "LIVE";
   let notes = "";
 
-  if (!logEntry.allPass) {
+  if (logEntry.type === "EXIT") {
+    side = logEntry.side === "long" ? "SELL" : "BUY";
+    quantity = logEntry.quantity;
+    entryPrice = logEntry.entryPrice.toFixed(2);
+    exitPrice = logEntry.exitPrice.toFixed(2);
+    totalUSD = logEntry.sizeUSD.toFixed(2);
+    fee = (logEntry.sizeUSD * 0.001 * 2).toFixed(4);
+    pnlUSD = logEntry.pnlUSD.toFixed(2);
+    pnlPct = logEntry.pnlPct.toFixed(3);
+    netAmount = (logEntry.sizeUSD + logEntry.pnlUSD - parseFloat(fee)).toFixed(2);
+    orderId = logEntry.orderId || "";
+    notes = `Exit: ${logEntry.exitReason}`;
+  } else if (!logEntry.allPass) {
     const failed = logEntry.conditions
       .filter((c) => !c.pass)
       .map((c) => c.label)
@@ -385,37 +469,31 @@ function writeTradeCsv(logEntry) {
     mode = "BLOCKED";
     orderId = "BLOCKED";
     notes = `Failed: ${failed}`;
-  } else if (logEntry.paperTrading) {
-    side = "BUY";
-    quantity = (logEntry.tradeSize / logEntry.price).toFixed(6);
-    totalUSD = logEntry.tradeSize.toFixed(2);
-    fee = (logEntry.tradeSize * 0.001).toFixed(4);
-    netAmount = (logEntry.tradeSize - parseFloat(fee)).toFixed(2);
-    orderId = logEntry.orderId || "";
-    mode = "PAPER";
-    notes = "All conditions met";
   } else {
     side = "BUY";
     quantity = (logEntry.tradeSize / logEntry.price).toFixed(6);
+    entryPrice = logEntry.price.toFixed(2);
     totalUSD = logEntry.tradeSize.toFixed(2);
     fee = (logEntry.tradeSize * 0.001).toFixed(4);
     netAmount = (logEntry.tradeSize - parseFloat(fee)).toFixed(2);
     orderId = logEntry.orderId || "";
-    mode = "LIVE";
-    notes = logEntry.error ? `Error: ${logEntry.error}` : "All conditions met";
+    notes = logEntry.error ? `Error: ${logEntry.error}` : "Entry — position opened";
   }
 
   const row = [
     date,
     time,
-    "BitGet",
+    "Coinbase",
     logEntry.symbol,
     side,
     quantity,
-    logEntry.price.toFixed(2),
+    entryPrice,
+    exitPrice,
     totalUSD,
     fee,
     netAmount,
+    pnlUSD,
+    pnlPct,
     orderId,
     mode,
     `"${notes}"`,
@@ -504,14 +582,69 @@ async function run() {
     return;
   }
 
-  // Run safety check
-  const { results, allPass } = runSafetyCheck(price, ema8, vwap, rsi3, rules);
-
   // Calculate position size
   const tradeSize = Math.min(
     CONFIG.portfolioValue * 0.01,
     CONFIG.maxTradeSizeUSD,
   );
+
+  // ── Check exit first if we have an open position ──────────────────────────
+  const openPosition = loadPosition();
+
+  if (openPosition && openPosition.symbol === CONFIG.symbol) {
+    const { shouldExit, reason } = checkExitConditions(openPosition, price, ema8, vwap, rsi3);
+
+    if (shouldExit) {
+      const { pnlUSD, pnlPct } = calcPnL(openPosition, price);
+      const pnlSign = pnlUSD >= 0 ? "+" : "";
+
+      console.log("\n── Decision ─────────────────────────────────────────────\n");
+      console.log(`📤 CLOSING POSITION — ${reason}`);
+      console.log(`   Entry: $${openPosition.entryPrice.toFixed(2)} → Exit: $${price.toFixed(2)}`);
+      console.log(`   P&L: ${pnlSign}$${pnlUSD.toFixed(2)} (${pnlSign}${pnlPct.toFixed(3)}%)`);
+
+      const exitEntry = {
+        type: "EXIT",
+        timestamp: new Date().toISOString(),
+        symbol: CONFIG.symbol,
+        side: openPosition.side,
+        entryPrice: openPosition.entryPrice,
+        exitPrice: price,
+        quantity: openPosition.quantity,
+        sizeUSD: openPosition.sizeUSD,
+        pnlUSD,
+        pnlPct,
+        exitReason: reason,
+        orderId: CONFIG.paperTrading ? `PAPER-EXIT-${Date.now()}` : null,
+        paperTrading: CONFIG.paperTrading,
+        price,
+        conditions: [],
+        allPass: true,
+      };
+
+      log.trades.push(exitEntry);
+      saveLog(log);
+      writeTradeCsv(exitEntry);
+      clearPosition();
+      console.log(`\nDecision log saved → ${LOG_FILE}`);
+      console.log("═══════════════════════════════════════════════════════════\n");
+      return;
+    } else {
+      console.log("\n── Decision ─────────────────────────────────────────────\n");
+      console.log(`  Holding open ${openPosition.side} from $${openPosition.entryPrice.toFixed(2)}`);
+      const { pnlUSD, pnlPct } = calcPnL(openPosition, price);
+      const pnlSign = pnlUSD >= 0 ? "+" : "";
+      console.log(`  Current P&L: ${pnlSign}$${pnlUSD.toFixed(2)} (${pnlSign}${pnlPct.toFixed(3)}%)`);
+      console.log(`  No exit conditions met — holding.`);
+      console.log("═══════════════════════════════════════════════════════════\n");
+      return;
+    }
+  }
+
+  // ── No open position — check entry ────────────────────────────────────────
+
+  // Run safety check
+  const { results, allPass } = runSafetyCheck(price, ema8, vwap, rsi3, rules);
 
   // Decision
   console.log("\n── Decision ─────────────────────────────────────────────\n");
@@ -543,24 +676,18 @@ async function run() {
   } else {
     console.log(`✅ ALL CONDITIONS MET`);
 
+    const stopLoss = price * (1 - 0.003); // 0.3% below entry for longs
+    const quantity = (tradeSize / price).toFixed(6);
+
     if (CONFIG.paperTrading) {
-      console.log(
-        `\n📋 PAPER TRADE — would buy ${CONFIG.symbol} ~$${tradeSize.toFixed(2)} at market`,
-      );
-      console.log(`   (Set PAPER_TRADING=false in .env to place real orders)`);
+      console.log(`\n📋 PAPER TRADE — buying ${CONFIG.symbol} ~$${tradeSize.toFixed(2)} at market`);
+      console.log(`   Stop loss: $${stopLoss.toFixed(2)} (0.3% below entry)`);
       logEntry.orderPlaced = true;
       logEntry.orderId = `PAPER-${Date.now()}`;
     } else {
-      console.log(
-        `\n🔴 PLACING LIVE ORDER — $${tradeSize.toFixed(2)} BUY ${CONFIG.symbol}`,
-      );
+      console.log(`\n🔴 PLACING LIVE ORDER — $${tradeSize.toFixed(2)} BUY ${CONFIG.symbol}`);
       try {
-        const order = await placeBitGetOrder(
-          CONFIG.symbol,
-          "buy",
-          tradeSize,
-          price,
-        );
+        const order = await placeBitGetOrder(CONFIG.symbol, "buy", tradeSize, price);
         logEntry.orderPlaced = true;
         logEntry.orderId = order.orderId;
         console.log(`✅ ORDER PLACED — ${order.orderId}`);
@@ -568,6 +695,20 @@ async function run() {
         console.log(`❌ ORDER FAILED — ${err.message}`);
         logEntry.error = err.message;
       }
+    }
+
+    if (logEntry.orderPlaced) {
+      savePosition({
+        symbol: CONFIG.symbol,
+        side: "long",
+        entryPrice: price,
+        entryTime: new Date().toISOString(),
+        quantity,
+        sizeUSD: tradeSize,
+        stopLoss,
+        orderId: logEntry.orderId,
+      });
+      console.log(`   Position saved — will check exit conditions next run`);
     }
   }
 
