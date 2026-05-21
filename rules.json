@@ -1,50 +1,83 @@
 {
-  "watchlist": ["BTCUSDT"],
-  "default_timeframe": "1m",
+  "watchlist": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
+  "default_timeframe": "4h",
 
   "strategy": {
-    "name": "VWAP + RSI(3) + EMA(8) Scalping Strategy",
-    "sources": [],
-    "description": "Three indicators, each doing a different job. EMA(8) for trend direction, VWAP for session bias, RSI(3) for entry timing. All three must align before a trade fires."
+    "name": "Crypto Face — Market Cipher Multi-Timeframe Momentum Strategy",
+    "sources": ["https://www.youtube.com/@CryptoFace"],
+    "description": "A multi-timeframe confluence strategy built around the Market Cipher indicator suite (A + B). Market Cipher A (8-EMA ribbon) defines macro trend bias. Market Cipher B (WaveTrend oscillator combining WaveTrend, RSI, MFI, VWAP, and Stochastic RSI) provides momentum, divergence, and precise entry timing signals. The daily chart identifies setups; the 4H chart times entries. Core signals are: green dot (buy-the-dip in uptrend), red dot (exit or short in downtrend), VWAP oscillator cross (directional bias flip), and WaveTrend divergence (reversal warning). Risk management is strict — fixed stop below/above the signal candle, 1–2% account risk per trade, asymmetric reward targets."
   },
 
   "indicators": {
-    "ema_8": "Trend direction. Price above EMA(8) = bullish momentum. Below = bearish.",
-    "vwap": "Session bias. Price above VWAP = buyers in control. Below = sellers. Resets at midnight UTC.",
-    "rsi_3": "Entry timing. RSI on 3 candles only — extremely sensitive. Below 30 in an uptrend = snap-back setup. Above 70 in a downtrend = reversal likely."
+    "market_cipher_a": "8-EMA ribbon overlaid on price. Blue/white ribbon = bull market, price above ribbon = bullish bias, look for longs only. Gray ribbon = bear market, price below ribbon = bearish bias, look for shorts only. Ribbon expanding = strong trend. Ribbon contracting = consolidation. Yellow diamond printed on ribbon = bullish trend continuation. Red diamond printed on ribbon = trend weakening.",
+    "market_cipher_b_wavetrend": "WaveTrend oscillator (WT1 fast blue line, WT2 slow blue line). Oscillates between approximately -100 and +100. Oversold zone is below -60; overbought zone is above +60. Bullish cross (WT1 crosses above WT2 in oversold) = buy signal. Bearish cross (WT1 crosses below WT2 in overbought) = sell signal. Small circles mark every cross: green circle = bullish cross in oversold, red circle = bearish cross in overbought.",
+    "market_cipher_b_green_dot": "Momentum Green Dot — fires when all five internal MCB algorithms converge simultaneously in oversold territory. Primary dip-buying signal in a bull market. Also used to temporarily exit shorts in a bear market. Anchor dot = first green dot at deep oversold (do not enter immediately, market may still be mid-capitulation). Trigger dot = second green dot at a shallower level forming a higher low (W-pattern confirmed, selling exhaustion complete — enter here).",
+    "market_cipher_b_red_dot": "Red dot fires when all five algorithms converge in overbought territory. Signal to exit longs or enter shorts in a downtrend. Enter short (or exit long) on the close of the candle following the red dot.",
+    "market_cipher_b_money_flow": "Money Flow Wave oscillates between -100 and +100. Green = capital flowing into asset (bullish backdrop). Red = capital flowing out (bearish backdrop). Signals in the extreme zones (above +60 or below -60) are significantly more reliable. Use to confirm green/red dot signals: dot + matching money flow color = high-conviction setup.",
+    "market_cipher_b_vwap_oscillator": "VWAP-based oscillator cross. Cross up = go long, stay long until next cross down. Cross down = go short, stay short until next cross up. Used on 4H chart for directional bias and entry/exit timing.",
+    "market_cipher_b_divergence": "When price makes a new high or low but WaveTrend waves do not confirm, MCB automatically marks the divergence with a purple triangle. Bearish divergence (price higher high, WT lower high) = reversal warning, tighten stop or reduce position. Bullish divergence (price lower low, WT higher low) = reversal warning, watch for green dot trigger entry."
   },
 
   "bias_criteria": {
-    "bullish": ["Price is above VWAP", "Price is above EMA(8)"],
-    "bearish": ["Price is below VWAP", "Price is below EMA(8)"]
+    "bullish": [
+      "Market Cipher A EMA ribbon is blue/white on the daily or weekly chart",
+      "Price is above the Market Cipher A ribbon on the daily chart",
+      "Market Cipher B Money Flow wave is green on the daily chart",
+      "WaveTrend waves are above the zero line or recovering from oversold on the daily chart",
+      "No active bearish divergence on the daily chart"
+    ],
+    "bearish": [
+      "Market Cipher A EMA ribbon is gray on the daily or weekly chart",
+      "Price is below the Market Cipher A ribbon on the daily chart",
+      "Market Cipher B Money Flow wave is red on the daily chart",
+      "WaveTrend waves are below the zero line or rolling over from overbought on the daily chart",
+      "Active bearish divergence confirmed on the daily chart"
+    ]
   },
 
   "entry_rules": {
     "long": [
-      "Price is above VWAP — buyers in control for the session",
-      "Price is above EMA(8) — uptrend confirmed",
-      "RSI(3) has dropped below 30 — short-term pullback in an uptrend, snap-back likely"
+      "Step 1 — Macro bias check (weekly/daily): Market Cipher A ribbon is blue/white and price is above it. Money Flow wave on daily is green. Confirm bullish bias before proceeding.",
+      "Step 2 — Setup identification (daily chart): WaveTrend waves have dipped into oversold territory (below -60) on the daily. Watch for an anchor green dot to print at deep oversold. Do NOT enter on the anchor dot.",
+      "Step 3 — Entry trigger (4H chart): Wait for the trigger green dot — a second green dot printing at a shallower level (higher low, W-shape confirmed). Confirm that Money Flow wave is green or turning green. Confirm VWAP oscillator has crossed up or is above zero. Enter long on the close of the trigger-dot candle.",
+      "Step 4 — Additional confirmation (optional, higher conviction): Green WaveTrend circle (WT1 crosses above WT2 in oversold zone) aligns with the green dot. Price has reclaimed Market Cipher A ribbon from below.",
+      "Step 5 — Divergence entry: If bullish divergence triangle is printed (price lower low, WT higher low), treat this as a valid entry trigger even without a green dot, provided Money Flow is green and bias is bullish."
     ],
     "short": [
-      "Price is below VWAP — sellers in control",
-      "Price is below EMA(8) — downtrend confirmed",
-      "RSI(3) has spiked above 70 — overbought in a downtrend, reversal likely"
+      "Step 1 — Macro bias check (weekly/daily): Market Cipher A ribbon is gray and price is below it. Money Flow wave on daily is red. Confirm bearish bias before proceeding.",
+      "Step 2 — Setup identification (daily chart): WaveTrend waves have risen into overbought territory (above +60) on the daily. Watch for a red dot to print.",
+      "Step 3 — Entry trigger (4H chart): Red dot printed in overbought zone on the 4H or daily chart. Confirm Money Flow wave is red. Confirm VWAP oscillator has crossed down or is below zero. Enter short on the close of the candle following the red dot.",
+      "Step 4 — Additional confirmation (optional): Red WaveTrend circle (WT1 crosses below WT2 in overbought zone) aligns with the red dot. Price has broken below Market Cipher A ribbon.",
+      "Step 5 — Divergence short: If bearish divergence triangle is printed (price higher high, WT lower high) after extended uptrend, treat as valid short trigger when Money Flow is red and bias is bearish."
     ]
   },
 
   "exit_rules": [
-    "Exit when RSI(3) crosses back above 50 (for longs) or below 50 (for shorts)",
-    "Hard stop: 0.3% below entry for longs, 0.3% above entry for shorts",
-    "Take profit at next VWAP touch or EMA(8) cross"
+    "Primary long exit: Red dot prints in overbought zone on the 4H or daily chart — close long on candle close.",
+    "Primary short exit: Green trigger dot prints in oversold zone on the 4H or daily chart — close short on candle close.",
+    "VWAP oscillator cross against position: If VWAP oscillator crosses against your trade direction, close or reduce by 50%.",
+    "Money Flow flip: If Money Flow wave changes color against your position on the 4H chart, begin scaling out.",
+    "WaveTrend cross against position: If WT1 crosses below WT2 (for longs) or above WT2 (for shorts) in the signal zone, exit the full position.",
+    "Trailing stop: Once a long trade is up 3%+, trail stop to breakeven. Once up 6%+, trail stop to +3%. Reverse for shorts.",
+    "Time-based exit: If price has not moved in your favor within 3 candles on the entry timeframe, reassess and consider exiting if thesis is invalidated.",
+    "Bearish divergence detected on 4H while in a long: Tighten stop to just below the most recent higher low and prepare to exit.",
+    "Bullish divergence detected on 4H while in a short: Tighten stop to just above the most recent lower high and prepare to exit."
   ],
 
   "risk_rules": [
-    "Risk maximum 1% of portfolio per trade",
-    "Maximum trade size capped by MAX_TRADE_SIZE_USD in .env",
-    "Maximum trades per day capped by MAX_TRADES_PER_DAY in .env",
-    "Do not trade if price is more than 1.5% away from VWAP — overextended",
-    "Paper trade first — validate this strategy on your specific asset before going live"
+    "Maximum account risk per trade: 1–2% of total trading capital.",
+    "Stop loss placement (long): Set stop loss just below the wick of the anchor candle (the candle that printed the anchor green dot). If using daily signal with 4H entry, stop is below the 4H trigger candle low.",
+    "Stop loss placement (short): Set stop loss just above the wick of the candle that printed the red dot.",
+    "Risk-reward minimum: Do not enter a trade unless the target offers at least 2:1 reward-to-risk ratio. Preferred is 3:1.",
+    "Position sizing formula: Position Size = (Account Balance × Risk%) / (Entry Price − Stop Price). Adjust leverage accordingly.",
+    "Leverage: Conservative — 2x to 5x max on high-conviction setups. Avoid leverage during high-volatility events (CPI, FOMC, major news). No leverage in choppy/ranging markets where signal accuracy drops to 45–50%.",
+    "Avoid low-liquidity altcoins: Stick to top-cap coins (BTC, ETH, SOL, BNB, XRP) for leveraged trades. Market Cipher signals are more reliable on higher market cap assets.",
+    "Do not trade against the macro ribbon: If Market Cipher A ribbon is gray (bear market), only short or stay out — no counter-trend longs. If ribbon is blue/white, only long or stay out.",
+    "Confluence requirement: Require at least 3 of the following before entering: (1) bias-aligned ribbon, (2) green/red dot signal, (3) matching Money Flow color, (4) VWAP oscillator in alignment, (5) no active divergence against trade direction.",
+    "No trading in ranging/choppy markets: When WaveTrend waves oscillate between -40 and +40 without clear directional moves, signal accuracy degrades — stand aside.",
+    "Maximum concurrent positions: No more than 3 open positions at once to manage overall portfolio exposure.",
+    "Daily loss limit: If account is down 5% on the day, stop trading for the remainder of that session."
   ],
 
-  "notes": "Scalping strategy — designed for 1m to 5m timeframes. RSI(3) is intentionally fast and sensitive. Do not apply to higher timeframes."
+  "notes": "The Apify scrape of the CryptoFace YouTube channel was blocked in this environment (network not in allowlist). These rules are reconstructed from extensive web research covering: the official Market Cipher indicator documentation, the Crypto Face website (cryptofacecrypto.com), multiple third-party guides and analyses of Crypto Face's methodology (Gate.com, Bitget wiki, Binance Square), and the Market Cipher official trading strategies page. Crypto Face (real name reportedly Jeff Centrella) co-created the Market Cipher indicator and teaches its application on his YouTube channel. His core approach is: use Market Cipher A for macro trend bias, use Market Cipher B's green/red dots + wavetrend crosses + money flow + divergence for timing entries and exits, primarily on Bitcoin and large-cap altcoins, across daily-to-4H timeframes for swing trades. The strategy is primarily designed for crypto perpetual futures with moderate leverage. Timeframe hierarchy: Weekly/Daily for bias → Daily for setup identification → 4H for entry timing → 1H/15m optional for precision entry refinement."
 }
