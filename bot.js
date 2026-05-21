@@ -699,7 +699,7 @@ async function run() {
       saveLog(log);
       writeTradeCsv(exitEntry);
       clearPosition();
-      const pnlSign = exitEntry.pnlUSD >= 0 ? "+" : "";
+      const pnlSign2 = exitEntry.pnlUSD >= 0 ? "+" : "";
       await appendToSheet([
         new Date().toISOString().slice(0, 10),
         new Date().toISOString().slice(11, 19),
@@ -707,8 +707,8 @@ async function run() {
         exitEntry.entryPrice.toFixed(2),
         exitEntry.exitPrice.toFixed(2),
         exitEntry.sizeUSD.toFixed(2),
-        `${pnlSign}${exitEntry.pnlUSD.toFixed(2)}`,
-        `${pnlSign}${exitEntry.pnlPct.toFixed(3)}%`,
+        `${pnlSign2}${exitEntry.pnlUSD.toFixed(2)}`,
+        `${pnlSign2}${exitEntry.pnlPct.toFixed(3)}%`,
         CONFIG.paperTrading ? "PAPER" : "LIVE",
         `Exit: ${exitEntry.exitReason}`,
       ]);
