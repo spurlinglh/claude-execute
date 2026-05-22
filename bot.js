@@ -354,20 +354,79 @@ function checkTradeLimits(log) {
 
 const POSITION_FILE = "position.json";
 
-function loadPosition() {
-  if (!existsSync(POSITION_FILE)) return null;
+async function ensurePositionSheet(token, sheetId) {
   try {
-    return JSON.parse(readFileSync(POSITION_FILE, "utf8"));
-  } catch {
-    return null;
-  }
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ requests: [{ addSheet: { properties: { title: "Position" } } }] }),
+    });
+  } catch {}
 }
 
-function savePosition(position) {
+async function loadPosition() {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (sheetId) {
+    try {
+      const token = await getGoogleAccessToken();
+      if (token) {
+        const res = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Position!A2:H2`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const data = await res.json();
+        if (data.values?.[0]?.[0]) {
+          const [symbol, side, entryPrice, entryTime, quantity, sizeUSD, stopLoss, orderId] = data.values[0];
+          return { symbol, side, entryPrice: parseFloat(entryPrice), entryTime, quantity, sizeUSD: parseFloat(sizeUSD), stopLoss: parseFloat(stopLoss), orderId };
+        }
+        return null;
+      }
+    } catch {}
+  }
+  if (!existsSync(POSITION_FILE)) return null;
+  try { return JSON.parse(readFileSync(POSITION_FILE, "utf8")); } catch { return null; }
+}
+
+async function savePosition(position) {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (sheetId) {
+    try {
+      const token = await getGoogleAccessToken();
+      if (token) {
+        await ensurePositionSheet(token, sheetId);
+        await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Position!A1:H1?valueInputOption=USER_ENTERED`,
+          { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ values: [["Symbol","Side","Entry Price","Entry Time","Quantity","Size USD","Stop Loss","Order ID"]] }) }
+        );
+        await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Position!A2:H2?valueInputOption=USER_ENTERED`,
+          { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ values: [[position.symbol, position.side, position.entryPrice, position.entryTime, position.quantity, position.sizeUSD, position.stopLoss, position.orderId || ""]] }) }
+        );
+        console.log("Position saved to Google Sheets ✓");
+        return;
+      }
+    } catch (err) { console.log(`Failed to save position to sheet: ${err.message}`); }
+  }
   writeFileSync(POSITION_FILE, JSON.stringify(position, null, 2));
 }
 
-function clearPosition() {
+async function clearPosition() {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (sheetId) {
+    try {
+      const token = await getGoogleAccessToken();
+      if (token) {
+        await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Position!A2:H2:clear`,
+          { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
+        );
+        console.log("Position cleared from Google Sheets ✓");
+        return;
+      }
+    } catch (err) { console.log(`Failed to clear position from sheet: ${err.message}`); }
+  }
   if (existsSync(POSITION_FILE)) writeFileSync(POSITION_FILE, "null");
 }
 
@@ -660,7 +719,7 @@ async function run() {
   );
 
   // ── Check exit first if we have an open position ──────────────────────────
-  const openPosition = loadPosition();
+  const openPosition = await loadPosition();
 
   if (openPosition && openPosition.symbol === CONFIG.symbol) {
     const { shouldExit, reason } = checkExitConditions(openPosition, price, ema8, vwap, rsi3);
@@ -696,7 +755,7 @@ async function run() {
       log.trades.push(exitEntry);
       saveLog(log);
       writeTradeCsv(exitEntry);
-      clearPosition();
+      await clearPosition();
       const pnlSign2 = exitEntry.pnlUSD >= 0 ? "+" : "";
       await appendToSheet([
         new Date().toISOString().slice(0, 10),
@@ -800,7 +859,7 @@ async function run() {
     }
 
     if (logEntry.orderPlaced) {
-      savePosition({
+      await savePosition({
         symbol: CONFIG.symbol,
         side: "long",
         entryPrice: price,
