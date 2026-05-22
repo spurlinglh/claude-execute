@@ -86,6 +86,58 @@ async function ensureSheetHeaders() {
   } catch {}
 }
 
+async function updateBalanceSheet(log) {
+  const sheetId = process.env.GOOGLE_SHEET_ID;
+  if (!sheetId) return;
+  try {
+    const token = await getGoogleAccessToken();
+    if (!token) return;
+
+    // Calculate stats from trade log
+    const exits = log.trades.filter(t => t.type === "EXIT");
+    const totalPnlUSD = exits.reduce((sum, t) => sum + (t.pnlUSD || 0), 0);
+    const wins = exits.filter(t => t.pnlUSD > 0).length;
+    const losses = exits.filter(t => t.pnlUSD <= 0).length;
+    const winRate = exits.length > 0 ? ((wins / exits.length) * 100).toFixed(1) : "0.0";
+    const currentBalance = CONFIG.portfolioValue + totalPnlUSD;
+    const todayTrades = countTodaysTrades(log);
+
+    // Ensure Balance tab exists
+    try {
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ requests: [{ addSheet: { properties: { title: "Balance" } } }] }),
+      });
+    } catch {}
+
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Balance!A1:B10?valueInputOption=USER_ENTERED`,
+      {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ values: [
+          ["Last Updated", new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC"],
+          ["Mode", CONFIG.paperTrading ? "Paper Trading" : "Live Trading"],
+          ["Strategy", process.env.RULES_FILE || "rules.json"],
+          ["", ""],
+          ["Starting Balance", `$${CONFIG.portfolioValue.toFixed(2)}`],
+          ["Total P&L", `${totalPnlUSD >= 0 ? "+" : ""}$${totalPnlUSD.toFixed(2)}`],
+          ["Current Balance", `$${currentBalance.toFixed(2)}`],
+          ["", ""],
+          ["Total Trades", exits.length],
+          ["Win / Loss", `${wins} / ${losses}`],
+          ["Win Rate", `${winRate}%`],
+          ["Trades Today", `${todayTrades} / ${CONFIG.maxTradesPerDay}`],
+        ]}
+      }
+    );
+    console.log("Balance sheet updated ✓");
+  } catch (err) {
+    console.log(`Balance sheet update failed: ${err.message}`);
+  }
+}
+
 // ─── Onboarding ───────────────────────────────────────────────────────────────
 
 function checkOnboarding() {
@@ -770,6 +822,7 @@ async function run() {
         `Exit: ${exitEntry.exitReason}`,
       ]);
       console.log(`\nDecision log saved → ${LOG_FILE}`);
+      await updateBalanceSheet(log);
       console.log("═══════════════════════════════════════════════════════════\n");
       return;
     } else {
@@ -888,6 +941,8 @@ async function run() {
 
   // Write tax CSV row for every run (executed, paper, or blocked)
   writeTradeCsv(logEntry);
+
+  await updateBalanceSheet(log);
 
   console.log("═══════════════════════════════════════════════════════════\n");
 }
