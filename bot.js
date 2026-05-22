@@ -45,6 +45,7 @@ async function getGoogleAccessToken() {
 
 async function appendToSheet(values) {
   const sheetId = process.env.GOOGLE_SHEET_ID;
+  console.log(`appendToSheet called — GOOGLE_SHEET_ID: ${sheetId ? "set" : "NOT SET"}`);
   if (!sheetId) return;
   try {
     const token = await getGoogleAccessToken();
@@ -194,6 +195,7 @@ async function applyDashboardFormatting(token, spreadsheetId, totalPnlUSD) {
 
 async function updateBalanceSheet(log) {
   const sheetId = process.env.GOOGLE_SHEET_ID;
+  console.log(`updateBalanceSheet called — GOOGLE_SHEET_ID: ${sheetId ? "set" : "NOT SET"}`);
   if (!sheetId) return;
   try {
     const token = await getGoogleAccessToken();
