@@ -144,33 +144,33 @@ function countTodaysTrades(log) {
 // ─── Market Data (Binance public API — free, no auth) ───────────────────────
 
 async function fetchCandles(symbol, interval, limit = 100) {
+  // Kraken interval map (minutes)
   const intervalMap = {
-    "1m": "1",
-    "3m": "3",
-    "5m": "5",
-    "15m": "15",
-    "30m": "30",
-    "1H": "60",
-    "4H": "240",
-    "1D": "D",
-    "1W": "W",
+    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+    "1H": 60, "4H": 240, "1D": 1440, "1W": 10080,
   };
-  const bybitInterval = intervalMap[interval] || "15";
+  const kraken_interval = intervalMap[interval] || 15;
 
-  const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`;
+  // Map symbol to Kraken pair (BTCUSDT → XBTUSDT)
+  const pair = symbol.replace("BTC", "XBT");
+
+  const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=${kraken_interval}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Bybit API error: ${res.status}`);
+  if (!res.ok) throw new Error(`Kraken API error: ${res.status}`);
   const data = await res.json();
-  if (data.retCode !== 0) throw new Error(`Bybit API error: ${data.retMsg}`);
+  if (data.error && data.error.length > 0) throw new Error(`Kraken API error: ${data.error[0]}`);
 
-  // Bybit returns newest first — reverse so oldest is first
-  return data.result.list.reverse().map((k) => ({
-    time: parseInt(k[0]),
+  const pairKey = Object.keys(data.result).find(k => k !== "last");
+  const candles = data.result[pairKey];
+
+  // Kraken returns oldest first, limit to last N candles
+  return candles.slice(-limit).map((k) => ({
+    time: k[0] * 1000,
     open: parseFloat(k[1]),
     high: parseFloat(k[2]),
     low: parseFloat(k[3]),
     close: parseFloat(k[4]),
-    volume: parseFloat(k[5]),
+    volume: parseFloat(k[6]),
   }));
 }
 
