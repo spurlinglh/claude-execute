@@ -89,14 +89,10 @@ async function ensureSheetHeaders() {
 // ─── Onboarding ───────────────────────────────────────────────────────────────
 
 function checkOnboarding() {
-  const required = ["BITGET_API_KEY", "BITGET_SECRET_KEY"];
-  const missing = required.filter((k) => !process.env[k]);
-
-  if (missing.length > 0) {
-    const msg = `Missing credentials: ${missing.join(", ")}`;
-    console.log(`\n⚠️  ${msg}\n`);
-    throw new Error(msg);
-  }
+  const apiKey = process.env.BITGET_API_KEY;
+  const secretKey = process.env.BITGET_SECRET_KEY;
+  console.log(`  API Key set: ${apiKey ? "yes" : "NO"}`);
+  console.log(`  Secret Key set: ${secretKey ? "yes" : "NO"}`);
 
   // Always print the CSV location so users know where to find their trade log
   const csvPath = new URL("trades.csv", import.meta.url).pathname;
