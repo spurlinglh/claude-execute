@@ -39,6 +39,7 @@ async function getGoogleAccessToken() {
     body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
   });
   const data = await res.json();
+  if (!data.access_token) console.log(`Google auth failed: ${JSON.stringify(data)}`);
   return data.access_token || null;
 }
 
