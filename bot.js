@@ -721,6 +721,16 @@ async function run() {
       console.log(`  Current P&L: ${pnlSign}$${pnlUSD.toFixed(2)} (${pnlSign}${pnlPct.toFixed(3)}%)`);
       console.log(`  No exit conditions met — holding.`);
       console.log("═══════════════════════════════════════════════════════════\n");
+      await appendToSheet([
+        new Date().toISOString().slice(0, 10),
+        new Date().toISOString().slice(11, 19),
+        CONFIG.symbol, "HOLDING",
+        openPosition.entryPrice.toFixed(2), "", openPosition.sizeUSD.toFixed(2),
+        `${pnlUSD >= 0 ? "+" : ""}${pnlUSD.toFixed(2)}`,
+        `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(3)}%`,
+        CONFIG.paperTrading ? "PAPER" : "LIVE",
+        `Holding from $${openPosition.entryPrice.toFixed(2)}`,
+      ]);
       return;
     }
   }
@@ -757,6 +767,14 @@ async function run() {
     console.log(`🚫 TRADE BLOCKED`);
     console.log(`   Failed conditions:`);
     failed.forEach((f) => console.log(`   - ${f}`));
+    await appendToSheet([
+      new Date().toISOString().slice(0, 10),
+      new Date().toISOString().slice(11, 19),
+      CONFIG.symbol, "BLOCKED",
+      price.toFixed(2), "", "", "", "",
+      CONFIG.paperTrading ? "PAPER" : "LIVE",
+      `Failed: ${failed.join("; ")}`,
+    ]);
   } else {
     console.log(`✅ ALL CONDITIONS MET`);
 
