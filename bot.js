@@ -49,7 +49,7 @@ async function appendToSheet(values) {
     const token = await getGoogleAccessToken();
     if (!token) return;
     await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1:append?valueInputOption=USER_ENTERED`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${TRADE_TAB}!A1:append?valueInputOption=USER_ENTERED`,
       {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -69,13 +69,13 @@ async function ensureSheetHeaders() {
     const token = await getGoogleAccessToken();
     if (!token) return;
     const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${TRADE_TAB}!A1`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const data = await res.json();
     if (!data.values) {
       await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Sheet1!A1?valueInputOption=USER_ENTERED`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${TRADE_TAB}!A1?valueInputOption=USER_ENTERED`,
         {
           method: "PUT",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -107,12 +107,12 @@ async function updateBalanceSheet(log) {
       await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ requests: [{ addSheet: { properties: { title: "Balance" } } }] }),
+        body: JSON.stringify({ requests: [{ addSheet: { properties: { title: BALANCE_TAB } } }] }),
       });
     } catch {}
 
     await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Balance!A1:B10?valueInputOption=USER_ENTERED`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${BALANCE_TAB}!A1:B10?valueInputOption=USER_ENTERED`,
       {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -174,6 +174,10 @@ const CONFIG = {
 };
 
 const LOG_FILE = "safety-check-log.json";
+
+const TRADE_TAB = process.env.SHEET_TAB || "Sheet1";
+const BALANCE_TAB = `${TRADE_TAB} Balance`;
+const POSITION_TAB = `${TRADE_TAB} Position`;
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
@@ -411,7 +415,7 @@ async function ensurePositionSheet(token, sheetId) {
     await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ requests: [{ addSheet: { properties: { title: "Position" } } }] }),
+      body: JSON.stringify({ requests: [{ addSheet: { properties: { title: POSITION_TAB } } }] }),
     });
   } catch {}
 }
@@ -423,7 +427,7 @@ async function loadPosition() {
       const token = await getGoogleAccessToken();
       if (token) {
         const res = await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Position!A2:H2`,
+          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${POSITION_TAB}!A2:H2`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
         const data = await res.json();
@@ -447,12 +451,12 @@ async function savePosition(position) {
       if (token) {
         await ensurePositionSheet(token, sheetId);
         await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Position!A1:H1?valueInputOption=USER_ENTERED`,
+          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${POSITION_TAB}!A1:H1?valueInputOption=USER_ENTERED`,
           { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
             body: JSON.stringify({ values: [["Symbol","Side","Entry Price","Entry Time","Quantity","Size USD","Stop Loss","Order ID"]] }) }
         );
         await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Position!A2:H2?valueInputOption=USER_ENTERED`,
+          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${POSITION_TAB}!A2:H2?valueInputOption=USER_ENTERED`,
           { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
             body: JSON.stringify({ values: [[position.symbol, position.side, position.entryPrice, position.entryTime, position.quantity, position.sizeUSD, position.stopLoss, position.orderId || ""]] }) }
         );
@@ -471,7 +475,7 @@ async function clearPosition() {
       const token = await getGoogleAccessToken();
       if (token) {
         await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Position!A2:H2:clear`,
+          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${POSITION_TAB}!A2:H2:clear`,
           { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
         );
         console.log("Position cleared from Google Sheets ✓");
