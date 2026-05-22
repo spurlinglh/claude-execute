@@ -619,7 +619,8 @@ async function run() {
   console.log("═══════════════════════════════════════════════════════════");
 
   // Load strategy
-  const rules = JSON.parse(readFileSync("rules.json", "utf8"));
+  const rulesFile = process.env.RULES_FILE || "rules.json";
+  const rules = JSON.parse(readFileSync(rulesFile, "utf8"));
   console.log(`\nStrategy: ${rules.strategy.name}`);
   console.log(`Symbol: ${CONFIG.symbol} | Timeframe: ${CONFIG.timeframe}`);
 
