@@ -86,6 +86,111 @@ async function ensureSheetHeaders() {
   } catch {}
 }
 
+async function getNumericSheetId(token, spreadsheetId, tabName) {
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const data = await res.json();
+  const sheet = data.sheets?.find(s => s.properties.title === tabName);
+  return sheet?.properties?.sheetId ?? null;
+}
+
+function rgb(r, g, b) { return { red: r/255, green: g/255, blue: b/255 }; }
+
+async function applyDashboardFormatting(token, spreadsheetId, totalPnlUSD) {
+  const balanceId = await getNumericSheetId(token, spreadsheetId, BALANCE_TAB);
+  const tradeId = await getNumericSheetId(token, spreadsheetId, TRADE_TAB);
+  const requests = [];
+
+  const cell = (sheetId, r1, r2, c1, c2, fmt) => ({
+    repeatCell: {
+      range: { sheetId, startRowIndex: r1, endRowIndex: r2, startColumnIndex: c1, endColumnIndex: c2 },
+      cell: { userEnteredFormat: fmt },
+      fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,borders)",
+    },
+  });
+
+  if (balanceId !== null) {
+    const pnlColor = totalPnlUSD >= 0 ? rgb(39, 174, 96) : rgb(192, 57, 43);
+
+    // Title row — dark background, white bold
+    requests.push(cell(balanceId, 0, 1, 0, 2, {
+      backgroundColor: rgb(30, 30, 30),
+      textFormat: { bold: true, fontSize: 13, foregroundColor: { red: 1, green: 1, blue: 1 } },
+      horizontalAlignment: "CENTER",
+    }));
+    // Meta rows (last updated, mode, strategy)
+    requests.push(cell(balanceId, 1, 4, 0, 1, {
+      backgroundColor: rgb(245, 245, 245),
+      textFormat: { bold: true, foregroundColor: rgb(100, 100, 100), fontSize: 10 },
+    }));
+    requests.push(cell(balanceId, 1, 4, 1, 2, {
+      backgroundColor: rgb(245, 245, 245),
+      textFormat: { foregroundColor: rgb(60, 60, 60), fontSize: 10 },
+    }));
+    // Section header: Financials
+    requests.push(cell(balanceId, 4, 5, 0, 2, {
+      backgroundColor: rgb(52, 73, 94),
+      textFormat: { bold: true, fontSize: 10, foregroundColor: { red: 1, green: 1, blue: 1 } },
+    }));
+    // Starting balance row
+    requests.push(cell(balanceId, 5, 6, 0, 1, { textFormat: { bold: true, foregroundColor: rgb(80, 80, 80) } }));
+    requests.push(cell(balanceId, 5, 6, 1, 2, { textFormat: { bold: false } }));
+    // P&L row — green or red
+    requests.push(cell(balanceId, 6, 7, 0, 1, { textFormat: { bold: true, foregroundColor: rgb(80, 80, 80) } }));
+    requests.push(cell(balanceId, 6, 7, 1, 2, {
+      backgroundColor: totalPnlUSD >= 0 ? rgb(212, 239, 223) : rgb(250, 219, 216),
+      textFormat: { bold: true, foregroundColor: pnlColor, fontSize: 12 },
+    }));
+    // Current balance row — prominent
+    requests.push(cell(balanceId, 7, 8, 0, 1, { textFormat: { bold: true, foregroundColor: rgb(80, 80, 80) } }));
+    requests.push(cell(balanceId, 7, 8, 1, 2, {
+      backgroundColor: rgb(235, 245, 251),
+      textFormat: { bold: true, fontSize: 13, foregroundColor: rgb(30, 30, 30) },
+    }));
+    // Section header: Performance
+    requests.push(cell(balanceId, 8, 9, 0, 2, {
+      backgroundColor: rgb(52, 73, 94),
+      textFormat: { bold: true, fontSize: 10, foregroundColor: { red: 1, green: 1, blue: 1 } },
+    }));
+    // Stats rows
+    requests.push(cell(balanceId, 9, 13, 0, 1, { textFormat: { bold: true, foregroundColor: rgb(80, 80, 80) } }));
+    requests.push(cell(balanceId, 9, 13, 1, 2, { textFormat: { foregroundColor: rgb(30, 30, 30) } }));
+    // Column widths
+    requests.push({ updateDimensionProperties: {
+      range: { sheetId: balanceId, dimension: "COLUMNS", startIndex: 0, endIndex: 1 },
+      properties: { pixelSize: 160 }, fields: "pixelSize",
+    }});
+    requests.push({ updateDimensionProperties: {
+      range: { sheetId: balanceId, dimension: "COLUMNS", startIndex: 1, endIndex: 2 },
+      properties: { pixelSize: 200 }, fields: "pixelSize",
+    }});
+  }
+
+  if (tradeId !== null) {
+    // Trade log: bold dark header
+    requests.push(cell(tradeId, 0, 1, 0, 11, {
+      backgroundColor: rgb(30, 30, 30),
+      textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 }, fontSize: 10 },
+      horizontalAlignment: "CENTER",
+    }));
+    // Freeze header row
+    requests.push({ updateSheetProperties: {
+      properties: { sheetId: tradeId, gridProperties: { frozenRowCount: 1 } },
+      fields: "gridProperties.frozenRowCount",
+    }});
+  }
+
+  if (requests.length > 0) {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ requests }),
+    });
+  }
+}
+
 async function updateBalanceSheet(log) {
   const sheetId = process.env.GOOGLE_SHEET_ID;
   if (!sheetId) return;
@@ -93,7 +198,6 @@ async function updateBalanceSheet(log) {
     const token = await getGoogleAccessToken();
     if (!token) return;
 
-    // Calculate stats from trade log
     const exits = log.trades.filter(t => t.type === "EXIT");
     const totalPnlUSD = exits.reduce((sum, t) => sum + (t.pnlUSD || 0), 0);
     const wins = exits.filter(t => t.pnlUSD > 0).length;
@@ -101,6 +205,7 @@ async function updateBalanceSheet(log) {
     const winRate = exits.length > 0 ? ((wins / exits.length) * 100).toFixed(1) : "0.0";
     const currentBalance = CONFIG.portfolioValue + totalPnlUSD;
     const todayTrades = countTodaysTrades(log);
+    const strategyName = (process.env.RULES_FILE || "rules.json").replace("strategies/", "").replace(".json", "");
 
     // Ensure Balance tab exists
     try {
@@ -112,19 +217,20 @@ async function updateBalanceSheet(log) {
     } catch {}
 
     await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${BALANCE_TAB}!A1:B10?valueInputOption=USER_ENTERED`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${BALANCE_TAB}!A1:B13?valueInputOption=USER_ENTERED`,
       {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ values: [
+          [TRADE_TAB, ""],
           ["Last Updated", new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC"],
           ["Mode", CONFIG.paperTrading ? "Paper Trading" : "Live Trading"],
-          ["Strategy", process.env.RULES_FILE || "rules.json"],
-          ["", ""],
+          ["Strategy", strategyName],
+          ["FINANCIALS", ""],
           ["Starting Balance", `$${CONFIG.portfolioValue.toFixed(2)}`],
           ["Total P&L", `${totalPnlUSD >= 0 ? "+" : ""}$${totalPnlUSD.toFixed(2)}`],
           ["Current Balance", `$${currentBalance.toFixed(2)}`],
-          ["", ""],
+          ["PERFORMANCE", ""],
           ["Total Trades", exits.length],
           ["Win / Loss", `${wins} / ${losses}`],
           ["Win Rate", `${winRate}%`],
@@ -132,6 +238,8 @@ async function updateBalanceSheet(log) {
         ]}
       }
     );
+
+    await applyDashboardFormatting(token, sheetId, totalPnlUSD);
     console.log("Balance sheet updated ✓");
   } catch (err) {
     console.log(`Balance sheet update failed: ${err.message}`);
