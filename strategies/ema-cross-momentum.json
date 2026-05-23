@@ -1,0 +1,38 @@
+{
+  "strategy": {
+    "name": "EMA Cross Momentum",
+    "description": "9/21 EMA crossover with RSI(14) filter, volume confirmation, and VWAP session bias. One of the most backtested crypto strategies. Designed for 15m timeframe on BTC."
+  },
+  "indicators": {
+    "ema_9": "Fast EMA. Crosses above EMA(21) = bullish momentum starting.",
+    "ema_21": "Slow EMA. Price relationship to this determines trend strength.",
+    "rsi_14": "Standard RSI. Filter zone 35-65 — avoids entering overbought or oversold extremes.",
+    "vwap": "Session bias. Price above = buyers in control.",
+    "volume": "Must be above 20-period average to confirm the move is real."
+  },
+  "entry_rules": {
+    "long": [
+      "EMA(9) crosses above EMA(21) — momentum turning bullish",
+      "Price above VWAP — session bias bullish",
+      "RSI(14) between 35 and 65 — not overbought, trend has room to run",
+      "Volume above 20-period average — move is confirmed by participation"
+    ],
+    "short": [
+      "EMA(9) crosses below EMA(21) — momentum turning bearish",
+      "Price below VWAP — session bias bearish",
+      "RSI(14) between 35 and 65 — not oversold, trend has room to run",
+      "Volume above 20-period average — move is confirmed by participation"
+    ]
+  },
+  "exit_rules": [
+    "EMA(9) crosses back in opposite direction",
+    "RSI(14) reaches extreme (above 70 for longs, below 30 for shorts)",
+    "Hard stop: 0.5% from entry"
+  ],
+  "risk_rules": [
+    "Risk 1% of portfolio per trade",
+    "Max trade size capped by MAX_TRADE_SIZE_USD",
+    "Max 3 trades per day"
+  ],
+  "notes": "Best on 15m BTCUSDT. Volume filter is key — without it false crossovers are common in low-volume periods."
+}

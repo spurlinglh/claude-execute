@@ -603,6 +603,68 @@ function runCryptoFaceCheck(price, candles) {
 
 // ─── Trade Limits ────────────────────────────────────────────────────────────
 
+// ─── EMA Cross Momentum Strategy Check ───────────────────────────────────────
+
+function runEMACrossCheck(price, candles) {
+  const results = [];
+  const closes = candles.map(c => c.close);
+  const volumes = candles.map(c => c.volume);
+
+  const check = (label, required, actual, pass) => {
+    results.push({ label, required, actual, pass });
+    console.log(`  ${pass ? "✅" : "🚫"} ${label}`);
+    console.log(`     Required: ${required} | Actual: ${actual}`);
+  };
+
+  console.log("\n── EMA Cross Momentum Check ─────────────────────────────\n");
+
+  // Calculate indicators
+  const ema9Full  = calcEMAFull(closes, 9);
+  const ema21Full = calcEMAFull(closes, 21);
+  const ema9  = ema9Full[ema9Full.length - 1];
+  const ema21 = ema21Full[ema21Full.length - 1];
+  const prevEma9  = ema9Full[ema9Full.length - 2];
+  const prevEma21 = ema21Full[ema21Full.length - 2];
+  const rsi14 = calcRSI(closes, 14);
+  const vwap = calcVWAP(candles);
+
+  // Volume — compare last candle to 20-period average
+  const avgVol = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+  const lastVol = volumes[volumes.length - 1];
+  const volRatio = avgVol > 0 ? lastVol / avgVol : 0;
+
+  // Cross detection
+  const bullCross = prevEma9 <= prevEma21 && ema9 > ema21;
+  const bearCross = prevEma9 >= prevEma21 && ema9 < ema21;
+
+  console.log(`  EMA(9):  $${ema9?.toFixed(2)} | EMA(21): $${ema21?.toFixed(2)}`);
+  console.log(`  RSI(14): ${rsi14?.toFixed(2)} | VWAP: $${vwap?.toFixed(2)}`);
+  console.log(`  Volume ratio: ${volRatio.toFixed(2)}x average`);
+  console.log(`  Bull cross: ${bullCross} | Bear cross: ${bearCross}`);
+
+  const bullish = bullCross || (ema9 > ema21 && price > (vwap || 0));
+  const bearish = bearCross || (ema9 < ema21 && price < (vwap || price + 1));
+
+  if (bullCross || (ema9 > ema21)) {
+    console.log("  Bias: BULLISH — checking long entry\n");
+    check("EMA(9) above EMA(21)", `${ema21?.toFixed(2)}`, ema9?.toFixed(2), ema9 > ema21);
+    check("Fresh bullish EMA cross", "EMA9 crossed above EMA21", bullCross ? "YES" : "holding above", ema9 > ema21);
+    check("Price above VWAP", vwap ? `> $${vwap.toFixed(2)}` : "N/A", price.toFixed(2), vwap ? price > vwap : false);
+    check("RSI(14) in range 35-65", "35-65", rsi14?.toFixed(2), rsi14 >= 35 && rsi14 <= 65);
+    check("Volume above average", "> 1x avg", `${volRatio.toFixed(2)}x`, volRatio >= 1.0);
+  } else {
+    console.log("  Bias: BEARISH — checking short entry\n");
+    check("EMA(9) below EMA(21)", `< ${ema21?.toFixed(2)}`, ema9?.toFixed(2), ema9 < ema21);
+    check("Fresh bearish EMA cross", "EMA9 crossed below EMA21", bearCross ? "YES" : "holding below", ema9 < ema21);
+    check("Price below VWAP", vwap ? `< $${vwap.toFixed(2)}` : "N/A", price.toFixed(2), vwap ? price < vwap : false);
+    check("RSI(14) in range 35-65", "35-65", rsi14?.toFixed(2), rsi14 >= 35 && rsi14 <= 65);
+    check("Volume above average", "> 1x avg", `${volRatio.toFixed(2)}x`, volRatio >= 1.0);
+  }
+
+  const allPass = results.every(r => r.pass);
+  return { results, allPass };
+}
+
 function checkTradeLimits(log) {
   const todayCount = countTodaysTrades(log);
 
@@ -986,8 +1048,9 @@ async function run() {
   const price = closes[closes.length - 1];
   console.log(`  Current price: $${price.toFixed(2)}`);
 
-  const isCryptoFace = rules.strategy?.name?.toLowerCase().includes("crypto face") ||
-    rules.strategy?.name?.toLowerCase().includes("market cipher");
+  const stratName = rules.strategy?.name?.toLowerCase() || "";
+  const isCryptoFace = stratName.includes("crypto face") || stratName.includes("market cipher");
+  const isEMACross = stratName.includes("ema cross");
 
   // Calculate indicators
   const ema8 = calcEMA(closes, 8);
@@ -1091,7 +1154,9 @@ async function run() {
   // Run safety check — dispatch to correct strategy
   const { results, allPass } = isCryptoFace
     ? runCryptoFaceCheck(price, candles)
-    : runSafetyCheck(price, ema8, vwap, rsi3, rules);
+    : isEMACross
+      ? runEMACrossCheck(price, candles)
+      : runSafetyCheck(price, ema8, vwap, rsi3, rules);
 
   // Decision
   console.log("\n── Decision ─────────────────────────────────────────────\n");
