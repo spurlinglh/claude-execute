@@ -238,7 +238,7 @@ async function updateBalanceSheet(log) {
           ["Win / Loss", `${wins} / ${losses}`],
           ["Win Rate", `${winRate}%`],
           ["Trades Today", `${todayTrades} / ${CONFIG.maxTradesPerDay}`],
-        ]}
+        ]})
       }
     );
 
