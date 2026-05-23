@@ -43,6 +43,21 @@ async function getGoogleAccessToken() {
   return data.access_token || null;
 }
 
+async function sendTelegram(message) {
+  const token = process.env.TELEGRAM_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "HTML" }),
+    });
+  } catch (err) {
+    console.log(`Telegram notification failed: ${err.message}`);
+  }
+}
+
 async function appendToSheet(values) {
   const sheetId = process.env.GOOGLE_SHEET_ID;
   console.log(`appendToSheet called — GOOGLE_SHEET_ID: ${sheetId ? "set" : "NOT SET"}`);
@@ -1125,6 +1140,14 @@ async function run() {
       ]);
       console.log(`\nDecision log saved → ${LOG_FILE}`);
       await updateBalanceSheet(log);
+      await sendTelegram(
+        `${exitEntry.pnlUSD >= 0 ? "🟢" : "🔴"} <b>${CONFIG.paperTrading ? "PAPER " : ""}EXIT</b>\n` +
+        `Symbol: ${CONFIG.symbol}\n` +
+        `Entry: $${exitEntry.entryPrice.toFixed(2)} → Exit: $${exitEntry.exitPrice.toFixed(2)}\n` +
+        `P&L: ${exitEntry.pnlUSD >= 0 ? "▲" : "▼"} $${Math.abs(exitEntry.pnlUSD).toFixed(2)} (${Math.abs(exitEntry.pnlPct).toFixed(3)}%)\n` +
+        `Reason: ${exitEntry.exitReason}\n` +
+        `Strategy: ${TRADE_TAB}`
+      );
       console.log("═══════════════════════════════════════════════════════════\n");
       return;
     } else {
@@ -1237,6 +1260,14 @@ async function run() {
         CONFIG.paperTrading ? "PAPER" : "LIVE",
         `Stop loss: $${stopLoss.toFixed(2)}`,
       ]);
+      await sendTelegram(
+        `🟢 <b>${CONFIG.paperTrading ? "PAPER " : ""}ENTRY</b>\n` +
+        `Symbol: ${CONFIG.symbol}\n` +
+        `Price: $${price.toFixed(2)}\n` +
+        `Size: $${tradeSize.toFixed(2)}\n` +
+        `Stop loss: $${stopLoss.toFixed(2)}\n` +
+        `Strategy: ${TRADE_TAB}`
+      );
     }
   }
 
