@@ -1054,9 +1054,9 @@ async function run() {
         CONFIG.symbol, "EXIT",
         exitEntry.entryPrice.toFixed(2),
         exitEntry.exitPrice.toFixed(2),
-        exitEntry.sizeUSD.toFixed(2),
-        `${exitEntry.pnlUSD >= 0 ? "▲" : "▼"} ${Math.abs(exitEntry.pnlUSD).toFixed(2)}`,
-        `${Math.abs(exitEntry.pnlPct).toFixed(3)}%`,
+        `$${exitEntry.sizeUSD.toFixed(2)}`,
+        `${exitEntry.pnlUSD >= 0 ? "▲" : "▼"} $${Math.abs(exitEntry.pnlUSD).toFixed(2)}`,
+        `${exitEntry.pnlUSD >= 0 ? "▲" : "▼"} ${Math.abs(exitEntry.pnlPct).toFixed(3)}%`,
         CONFIG.paperTrading ? "PAPER" : "LIVE",
         `Exit: ${exitEntry.exitReason}`,
       ]);
@@ -1076,9 +1076,9 @@ async function run() {
         new Date().toISOString().slice(0, 10),
         new Date().toISOString().slice(11, 19),
         CONFIG.symbol, "HOLDING",
-        openPosition.entryPrice.toFixed(2), "", openPosition.sizeUSD.toFixed(2),
-        `${pnlUSD >= 0 ? "▲" : "▼"} ${Math.abs(pnlUSD).toFixed(2)}`,
-        `${Math.abs(pnlPct).toFixed(3)}%`,
+        openPosition.entryPrice.toFixed(2), "", `$${openPosition.sizeUSD.toFixed(2)}`,
+        `${pnlUSD >= 0 ? "▲" : "▼"} $${Math.abs(pnlUSD).toFixed(2)}`,
+        `${pnlUSD >= 0 ? "▲" : "▼"} ${Math.abs(pnlPct).toFixed(3)}%`,
         CONFIG.paperTrading ? "PAPER" : "LIVE",
         `Holding from $${openPosition.entryPrice.toFixed(2)}`,
       ]);
@@ -1124,7 +1124,7 @@ async function run() {
       new Date().toISOString().slice(0, 10),
       new Date().toISOString().slice(11, 19),
       CONFIG.symbol, "BLOCKED",
-      price.toFixed(2), "", "", "", "",
+      price.toFixed(2), "", `$${tradeSize.toFixed(2)}`, "", "",
       CONFIG.paperTrading ? "PAPER" : "LIVE",
       `Failed: ${failed.join("; ")}`,
     ]);
@@ -1168,7 +1168,7 @@ async function run() {
         new Date().toISOString().slice(0, 10),
         new Date().toISOString().slice(11, 19),
         CONFIG.symbol, "ENTRY",
-        price.toFixed(2), "", tradeSize.toFixed(2), "", "",
+        price.toFixed(2), "", `$${tradeSize.toFixed(2)}`, "", "",
         CONFIG.paperTrading ? "PAPER" : "LIVE",
         `Stop loss: $${stopLoss.toFixed(2)}`,
       ]);
