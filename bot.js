@@ -362,6 +362,63 @@ function calcEMA(closes, period) {
   return ema;
 }
 
+function calcEMAFull(closes, period) {
+  const multiplier = 2 / (period + 1);
+  const result = new Array(closes.length).fill(null);
+  let ema = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  result[period - 1] = ema;
+  for (let i = period; i < closes.length; i++) {
+    ema = closes[i] * multiplier + ema * (1 - multiplier);
+    result[i] = ema;
+  }
+  return result;
+}
+
+function calcSMAFull(arr, period) {
+  const result = new Array(arr.length).fill(null);
+  for (let i = period - 1; i < arr.length; i++) {
+    const slice = arr.slice(i - period + 1, i + 1).filter(v => v !== null);
+    if (slice.length === period) result[i] = slice.reduce((a, b) => a + b, 0) / period;
+  }
+  return result;
+}
+
+// WaveTrend oscillator (Market Cipher B core)
+function calcWaveTrend(candles, chLen = 9, avgLen = 12, maLen = 4) {
+  const ap = candles.map(c => (c.high + c.low + c.close) / 3);
+  const esa = calcEMAFull(ap, chLen);
+  const d = calcEMAFull(ap.map((v, i) => esa[i] !== null ? Math.abs(v - esa[i]) : null).map((v, i) => v ?? ap[i]), chLen);
+  const ci = ap.map((v, i) => {
+    if (esa[i] === null || d[i] === null || d[i] === 0) return 0;
+    return (v - esa[i]) / (0.015 * d[i]);
+  });
+  const wt1 = calcEMAFull(ci, avgLen);
+  const wt2 = calcSMAFull(wt1.map(v => v ?? 0), maLen);
+  const last = wt1.length - 1;
+  return {
+    wt1: wt1[last] ?? 0,
+    wt2: wt2[last] ?? 0,
+    prevWt1: wt1[last - 1] ?? 0,
+    prevWt2: wt2[last - 1] ?? 0,
+  };
+}
+
+// Money Flow (MFI-based, -100 to +100)
+function calcMoneyFlow(candles, period = 14) {
+  if (candles.length < period + 1) return 0;
+  let posFlow = 0, negFlow = 0;
+  for (let i = candles.length - period; i < candles.length; i++) {
+    const tp = (candles[i].high + candles[i].low + candles[i].close) / 3;
+    const prevTp = (candles[i-1].high + candles[i-1].low + candles[i-1].close) / 3;
+    const rawFlow = tp * candles[i].volume;
+    if (tp > prevTp) posFlow += rawFlow;
+    else negFlow += rawFlow;
+  }
+  if (posFlow + negFlow === 0) return 0;
+  const mfi = 100 * posFlow / (posFlow + negFlow);
+  return (mfi - 50) * 2; // scale to -100/+100
+}
+
 function calcRSI(closes, period = 14) {
   if (closes.length < period + 1) return null;
   let gains = 0,
@@ -488,6 +545,60 @@ function runSafetyCheck(price, ema8, vwap, rsi3, rules) {
 
   const allPass = results.every((r) => r.pass);
   return { results, allPass };
+}
+
+// ─── Crypto Face Strategy Check ──────────────────────────────────────────────
+
+function runCryptoFaceCheck(price, candles) {
+  const results = [];
+  const closes = candles.map(c => c.close);
+
+  const check = (label, required, actual, pass) => {
+    results.push({ label, required, actual, pass });
+    console.log(`  ${pass ? "✅" : "🚫"} ${label}`);
+    console.log(`     Required: ${required} | Actual: ${actual}`);
+  };
+
+  console.log("\n── Crypto Face Safety Check ─────────────────────────────\n");
+
+  const ema8  = calcEMA(closes, 8);
+  const ema13 = calcEMA(closes, 13);
+  const ema21 = calcEMA(closes, 21);
+  const { wt1, wt2, prevWt1, prevWt2 } = calcWaveTrend(candles);
+  const moneyFlow = calcMoneyFlow(candles);
+
+  // EMA ribbon — all three in order = strong trend
+  const bullishRibbon = ema8 > ema13 && ema13 > ema21;
+  const bearishRibbon = ema8 < ema13 && ema13 < ema21;
+
+  console.log(`  EMA ribbon: 8=${ema8.toFixed(2)} / 13=${ema13.toFixed(2)} / 21=${ema21.toFixed(2)}`);
+  console.log(`  WaveTrend: WT1=${wt1.toFixed(2)} / WT2=${wt2.toFixed(2)}`);
+  console.log(`  Money Flow: ${moneyFlow.toFixed(2)}`);
+
+  // WaveTrend bullish cross in oversold = buy signal
+  const wtBullishCross = prevWt1 <= prevWt2 && wt1 > wt2 && wt1 < -40;
+  // WaveTrend bearish cross in overbought = sell signal
+  const wtBearishCross = prevWt1 >= prevWt2 && wt1 < wt2 && wt1 > 40;
+
+  if (bullishRibbon) {
+    console.log("  Bias: BULLISH RIBBON — checking long entry\n");
+    check("EMA ribbon bullish (8 > 13 > 21)", "8>13>21", `${ema8.toFixed(0)}>${ema13.toFixed(0)}>${ema21.toFixed(0)}`, bullishRibbon);
+    check("Price above EMA ribbon", `> ${ema21.toFixed(2)}`, price.toFixed(2), price > ema21);
+    check("WaveTrend bullish cross in oversold", "WT1 crosses above WT2 below -40", `WT1=${wt1.toFixed(1)}`, wtBullishCross);
+    check("Money Flow positive", "> 0", moneyFlow.toFixed(2), moneyFlow > 0);
+  } else if (bearishRibbon) {
+    console.log("  Bias: BEARISH RIBBON — checking short entry\n");
+    check("EMA ribbon bearish (8 < 13 < 21)", "8<13<21", `${ema8.toFixed(0)}<${ema13.toFixed(0)}<${ema21.toFixed(0)}`, bearishRibbon);
+    check("Price below EMA ribbon", `< ${ema21.toFixed(2)}`, price.toFixed(2), price < ema21);
+    check("WaveTrend bearish cross in overbought", "WT1 crosses below WT2 above +40", `WT1=${wt1.toFixed(1)}`, wtBearishCross);
+    check("Money Flow negative", "< 0", moneyFlow.toFixed(2), moneyFlow < 0);
+  } else {
+    console.log("  Bias: NEUTRAL RIBBON — no clear trend. No trade.\n");
+    results.push({ label: "EMA ribbon", required: "Clear trend", actual: "Mixed", pass: false });
+  }
+
+  const allPass = results.every(r => r.pass);
+  return { results, allPass, indicators: { ema8, ema13, ema21, wt1, wt2, moneyFlow } };
 }
 
 // ─── Trade Limits ────────────────────────────────────────────────────────────
@@ -868,25 +979,29 @@ async function run() {
     return;
   }
 
-  // Fetch candle data — need enough for EMA(8) + full session for VWAP
-  console.log("\n── Fetching market data from Binance ───────────────────\n");
+  // Fetch candle data
+  console.log("\n── Fetching market data from Kraken ───────────────────\n");
   const candles = await fetchCandles(CONFIG.symbol, CONFIG.timeframe, 500);
   const closes = candles.map((c) => c.close);
   const price = closes[closes.length - 1];
   console.log(`  Current price: $${price.toFixed(2)}`);
+
+  const isCryptoFace = rules.strategy?.name?.toLowerCase().includes("crypto face") ||
+    rules.strategy?.name?.toLowerCase().includes("market cipher");
 
   // Calculate indicators
   const ema8 = calcEMA(closes, 8);
   const vwap = calcVWAP(candles);
   const rsi3 = calcRSI(closes, 3);
 
-  console.log(`  EMA(8):  $${ema8.toFixed(2)}`);
-  console.log(`  VWAP:    $${vwap ? vwap.toFixed(2) : "N/A"}`);
-  console.log(`  RSI(3):  ${rsi3 ? rsi3.toFixed(2) : "N/A"}`);
-
-  if (!vwap || !rsi3) {
-    console.log("\n⚠️  Not enough data to calculate indicators. Exiting.");
-    return;
+  if (!isCryptoFace) {
+    console.log(`  EMA(8):  $${ema8.toFixed(2)}`);
+    console.log(`  VWAP:    $${vwap ? vwap.toFixed(2) : "N/A"}`);
+    console.log(`  RSI(3):  ${rsi3 ? rsi3.toFixed(2) : "N/A"}`);
+    if (!vwap || !rsi3) {
+      console.log("\n⚠️  Not enough data to calculate indicators. Exiting.");
+      return;
+    }
   }
 
   // Calculate position size
@@ -973,8 +1088,10 @@ async function run() {
 
   // ── No open position — check entry ────────────────────────────────────────
 
-  // Run safety check
-  const { results, allPass } = runSafetyCheck(price, ema8, vwap, rsi3, rules);
+  // Run safety check — dispatch to correct strategy
+  const { results, allPass } = isCryptoFace
+    ? runCryptoFaceCheck(price, candles)
+    : runSafetyCheck(price, ema8, vwap, rsi3, rules);
 
   // Decision
   console.log("\n── Decision ─────────────────────────────────────────────\n");
