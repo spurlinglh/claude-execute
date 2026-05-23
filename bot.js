@@ -70,6 +70,16 @@ async function ensureSheetHeaders() {
   try {
     const token = await getGoogleAccessToken();
     if (!token) return;
+
+    // Create trade tab if it doesn't exist
+    try {
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ requests: [{ addSheet: { properties: { title: TRADE_TAB } } }] }),
+      });
+    } catch {}
+
     const res = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${TRADE_TAB}!A1`,
       { headers: { Authorization: `Bearer ${token}` } }
