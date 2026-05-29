@@ -347,10 +347,30 @@ async function fetchCandles(symbol, interval, limit = 100) {
   const pair = symbol.replace("BTC", "XBT");
 
   const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=${kraken_interval}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Kraken API error: ${res.status}`);
-  const data = await res.json();
-  if (data.error && data.error.length > 0) throw new Error(`Kraken API error: ${data.error[0]}`);
+
+  // Retry with exponential backoff — Kraken (Cloudflare) can 403/429 cloud IPs
+  // under frequent polling. Don't let a transient block crash the whole run.
+  let data;
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) {
+      const waitMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
+      console.log(`  Kraken fetch retry ${attempt}/3 after ${lastErr} — waiting ${waitMs}ms`);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+    try {
+      const res = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (trading-bot)", Accept: "application/json" },
+      });
+      if (!res.ok) { lastErr = `HTTP ${res.status}`; continue; }
+      data = await res.json();
+      if (data.error && data.error.length > 0) { lastErr = data.error[0]; data = null; continue; }
+      break;
+    } catch (err) {
+      lastErr = err.message;
+    }
+  }
+  if (!data) throw new Error(`Kraken API error after retries: ${lastErr}`);
 
   const pairKey = Object.keys(data.result).find(k => k !== "last");
   const candles = data.result[pairKey];
