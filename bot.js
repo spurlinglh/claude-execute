@@ -610,10 +610,10 @@ function runCryptoFaceCheck(price, candles) {
   console.log(`  WaveTrend: WT1=${wt1.toFixed(2)} / WT2=${wt2.toFixed(2)}`);
   console.log(`  Money Flow: ${moneyFlow.toFixed(2)}`);
 
-  // WaveTrend bullish cross in oversold = buy signal
-  const wtBullishCross = prevWt1 <= prevWt2 && wt1 > wt2 && wt1 < -20;
-  // WaveTrend bearish cross in overbought = sell signal
-  const wtBearishCross = prevWt1 >= prevWt2 && wt1 < wt2 && wt1 > 20;
+  // WaveTrend bullish: WT1 above WT2 and below 0 (momentum turning up from lows)
+  const wtBullishCross = wt1 > wt2 && wt1 < 0;
+  // WaveTrend bearish: WT1 below WT2 and above 0 (momentum turning down from highs)
+  const wtBearishCross = wt1 < wt2 && wt1 > 0;
 
   if (bullishRibbon) {
     console.log("  Bias: BULLISH RIBBON — checking long entry\n");
