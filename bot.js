@@ -686,14 +686,14 @@ function runEMACrossCheck(price, candles) {
     check("Fresh bullish EMA cross", "EMA9 crossed above EMA21", bullCross ? "YES" : "holding above", ema9 > ema21);
     check("Price above VWAP", vwap ? `> $${vwap.toFixed(2)}` : "N/A", price.toFixed(2), vwap ? price > vwap : false);
     check("RSI(14) in range 35-65", "35-65", rsi14?.toFixed(2), rsi14 >= 35 && rsi14 <= 65);
-    check("Volume above average", "> 1x avg", `${volRatio.toFixed(2)}x`, volRatio >= 1.0);
+    check("Volume above average", "> 0.8x avg", `${volRatio.toFixed(2)}x`, volRatio >= 0.8);
   } else {
     console.log("  Bias: BEARISH — checking short entry\n");
     check("EMA(9) below EMA(21)", `< ${ema21?.toFixed(2)}`, ema9?.toFixed(2), ema9 < ema21);
     check("Fresh bearish EMA cross", "EMA9 crossed below EMA21", bearCross ? "YES" : "holding below", ema9 < ema21);
     check("Price below VWAP", vwap ? `< $${vwap.toFixed(2)}` : "N/A", price.toFixed(2), vwap ? price < vwap : false);
     check("RSI(14) in range 35-65", "35-65", rsi14?.toFixed(2), rsi14 >= 35 && rsi14 <= 65);
-    check("Volume above average", "> 1x avg", `${volRatio.toFixed(2)}x`, volRatio >= 1.0);
+    check("Volume above average", "> 0.8x avg", `${volRatio.toFixed(2)}x`, volRatio >= 0.8);
   }
 
   const allPass = results.every(r => r.pass);
