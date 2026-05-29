@@ -298,7 +298,7 @@ const CONFIG = {
   timeframe: process.env.TIMEFRAME || "4H",
   portfolioValue: parseFloat(process.env.PORTFOLIO_VALUE_USD || "1000"),
   maxTradeSizeUSD: parseFloat(process.env.MAX_TRADE_SIZE_USD || "100"),
-  maxTradesPerDay: parseInt(process.env.MAX_TRADES_PER_DAY || "3"),
+  maxTradesPerDay: parseInt(process.env.MAX_TRADES_PER_DAY || "5"),
   paperTrading: process.env.PAPER_TRADING !== "false",
   tradeMode: process.env.TRADE_MODE || "spot",
   bitget: {
@@ -696,17 +696,7 @@ function checkTradeLimits(log) {
     `✅ Trades today: ${todayCount}/${CONFIG.maxTradesPerDay} — within limit`,
   );
 
-  const tradeSize = Math.min(
-    CONFIG.portfolioValue * 0.01,
-    CONFIG.maxTradeSizeUSD,
-  );
-
-  if (tradeSize > CONFIG.maxTradeSizeUSD) {
-    console.log(
-      `🚫 Trade size $${tradeSize.toFixed(2)} exceeds max $${CONFIG.maxTradeSizeUSD}`,
-    );
-    return false;
-  }
+  const tradeSize = CONFIG.maxTradeSizeUSD;
 
   console.log(
     `✅ Trade size: $${tradeSize.toFixed(2)} — within max $${CONFIG.maxTradeSizeUSD}`,
@@ -804,6 +794,12 @@ function checkExitConditions(position, price, ema8, vwap, rsi3) {
   console.log("\n── Exit Check ───────────────────────────────────────────\n");
   console.log(`  Open ${isLong ? "LONG" : "SHORT"} from $${position.entryPrice.toFixed(2)}`);
 
+  const priceDiff = isLong ? price - position.entryPrice : position.entryPrice - price;
+  const currentPnlPct = (priceDiff / position.entryPrice) * 100;
+  const minProfitPct = 0.5;
+  const hasMinProfit = currentPnlPct >= minProfitPct;
+  console.log(`  Current P&L: ${currentPnlPct >= 0 ? "+" : ""}${currentPnlPct.toFixed(3)}% (min for soft exit: ${minProfitPct}%)`);
+
   const check = (label, hit) => {
     results.push({ label, hit });
     console.log(`  ${hit ? "✅" : "  "} ${label}`);
@@ -814,14 +810,18 @@ function checkExitConditions(position, price, ema8, vwap, rsi3) {
     : price >= position.stopLoss;
   check(`Hard stop hit (${position.stopLoss.toFixed(2)})`, stopHit);
 
-  if (isLong) {
-    check("RSI(3) crossed back above 50", rsi3 > 50);
-    check("Price touched VWAP", Math.abs(price - vwap) / vwap < 0.001);
-    check("Price crossed below EMA(8)", price < ema8);
+  if (hasMinProfit) {
+    if (isLong) {
+      check("RSI(3) crossed back above 50", rsi3 > 50);
+      check("Price touched VWAP", Math.abs(price - vwap) / vwap < 0.001);
+      check("Price crossed below EMA(8)", price < ema8);
+    } else {
+      check("RSI(3) crossed back below 50", rsi3 < 50);
+      check("Price touched VWAP", Math.abs(price - vwap) / vwap < 0.001);
+      check("Price crossed above EMA(8)", price > ema8);
+    }
   } else {
-    check("RSI(3) crossed back below 50", rsi3 < 50);
-    check("Price touched VWAP", Math.abs(price - vwap) / vwap < 0.001);
-    check("Price crossed above EMA(8)", price > ema8);
+    console.log(`  ⏳ Soft exits suppressed — waiting for +${minProfitPct}% profit threshold`);
   }
 
   const shouldExit = results.some((r) => r.hit);
@@ -1082,11 +1082,8 @@ async function run() {
     }
   }
 
-  // Calculate position size
-  const tradeSize = Math.min(
-    CONFIG.portfolioValue * 0.01,
-    CONFIG.maxTradeSizeUSD,
-  );
+  // Calculate position size — use maxTradeSizeUSD directly
+  const tradeSize = CONFIG.maxTradeSizeUSD;
 
   // ── Check exit first if we have an open position ──────────────────────────
   const openPosition = await loadPosition();
@@ -1174,6 +1171,34 @@ async function run() {
 
   // ── No open position — check entry ────────────────────────────────────────
 
+  // Daily EMA(50) macro trend filter — only enter longs if price > daily EMA(50)
+  if (!isCryptoFace && !isEMACross) {
+    try {
+      console.log("\n── Daily Trend Filter (EMA 50) ─────────────────────────\n");
+      const dailyCandles = await fetchCandles(CONFIG.symbol, "1D", 60);
+      const dailyCloses = dailyCandles.map(c => c.close);
+      const dailyEma50 = calcEMA(dailyCloses, 50);
+      const aboveDailyEma = price > dailyEma50;
+      console.log(`  Daily EMA(50): $${dailyEma50.toFixed(2)} | Price: $${price.toFixed(2)}`);
+      console.log(`  ${aboveDailyEma ? "✅" : "🚫"} Price ${aboveDailyEma ? "above" : "below"} daily EMA(50) — ${aboveDailyEma ? "macro uptrend OK" : "macro downtrend, no longs"}`);
+      if (!aboveDailyEma) {
+        console.log("\n🚫 TRADE BLOCKED — price below daily EMA(50), avoiding longs in macro downtrend.");
+        await appendToSheet([
+          new Date().toISOString().slice(0, 10),
+          new Date().toISOString().slice(11, 19),
+          CONFIG.symbol, "BLOCKED",
+          price.toFixed(2), "", `$${tradeSize.toFixed(2)}`, "", "",
+          CONFIG.paperTrading ? "PAPER" : "LIVE",
+          `Daily EMA(50) filter: price $${price.toFixed(2)} < EMA50 $${dailyEma50.toFixed(2)}`,
+        ]);
+        await updateBalanceSheet(log);
+        return;
+      }
+    } catch (err) {
+      console.log(`  ⚠️  Daily EMA filter skipped: ${err.message}`);
+    }
+  }
+
   // Run safety check — dispatch to correct strategy
   const { results, allPass } = isCryptoFace
     ? runCryptoFaceCheck(price, candles)
@@ -1219,7 +1244,7 @@ async function run() {
   } else {
     console.log(`✅ ALL CONDITIONS MET`);
 
-    const stopLoss = price * (1 - 0.003); // 0.3% below entry for longs
+    const stopLoss = price * (1 - 0.005); // 0.5% below entry for longs
     const quantity = (tradeSize / price).toFixed(6);
 
     if (CONFIG.paperTrading) {
