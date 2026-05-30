@@ -1336,9 +1336,23 @@ if (isMain) {
   if (process.argv.includes("--tax-summary")) {
     generateTaxSummary();
   } else {
-    run().catch((err) => {
-      console.error("Bot error:", err);
-      process.exit(1);
-    });
+    const RUN_INTERVAL_MS = parseInt(process.env.RUN_INTERVAL_MS || "180000"); // 3 min default
+
+    const loop = async () => {
+      while (true) {
+        const start = Date.now();
+        try {
+          await run();
+        } catch (err) {
+          console.error("Bot error:", err);
+        }
+        const elapsed = Date.now() - start;
+        const wait = Math.max(0, RUN_INTERVAL_MS - elapsed);
+        console.log(`Next run in ${Math.round(wait / 1000)}s`);
+        await new Promise((r) => setTimeout(r, wait));
+      }
+    };
+
+    loop();
   }
 }
