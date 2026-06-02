@@ -226,11 +226,40 @@ async function updateBalanceSheet(log) {
     const token = await getGoogleAccessToken();
     if (!token) return;
 
-    const exits = log.trades.filter(t => t.type === "EXIT");
-    const totalPnlUSD = exits.reduce((sum, t) => sum + (t.pnlUSD || 0), 0);
-    const wins = exits.filter(t => t.pnlUSD > 0).length;
-    const losses = exits.filter(t => t.pnlUSD <= 0).length;
-    const winRate = exits.length > 0 ? ((wins / exits.length) * 100).toFixed(1) : "0.0";
+    // Read all trade rows from the Sheet to compute P&L across container restarts
+    let totalPnlUSD = 0;
+    let wins = 0;
+    let losses = 0;
+    try {
+      const res = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${TRADE_TAB}!A2:K`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const data = await res.json();
+      if (data.values) {
+        for (const row of data.values) {
+          const type = row[3] || "";
+          if (type === "EXIT") {
+            // Column H (index 7): "▲ $12.34" or "▼ $12.34"
+            const raw = (row[7] || "").replace(/[▲▼$\s]/g, "");
+            const pnl = parseFloat(raw);
+            if (!isNaN(pnl)) {
+              const signed = (row[7] || "").includes("▼") ? -pnl : pnl;
+              totalPnlUSD += signed;
+              if (signed > 0) wins++; else losses++;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.log(`  ⚠️  Could not read sheet for P&L — falling back to local log: ${err.message}`);
+      const exits = log.trades.filter(t => t.type === "EXIT");
+      totalPnlUSD = exits.reduce((sum, t) => sum + (t.pnlUSD || 0), 0);
+      wins = exits.filter(t => t.pnlUSD > 0).length;
+      losses = exits.filter(t => t.pnlUSD <= 0).length;
+    }
+    const totalTrades = wins + losses;
+    const winRate = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) : "0.0";
     const currentBalance = CONFIG.portfolioValue + totalPnlUSD;
     const todayTrades = countTodaysTrades(log);
     const strategyName = (process.env.RULES_FILE || "rules.json").replace("strategies/", "").replace(".json", "");
@@ -259,7 +288,7 @@ async function updateBalanceSheet(log) {
           ["Total P&L", `${totalPnlUSD >= 0 ? "▲" : "▼"} $${Math.abs(totalPnlUSD).toFixed(2)}`],
           ["Current Balance", `$${currentBalance.toFixed(2)}`],
           ["PERFORMANCE", ""],
-          ["Total Trades", exits.length],
+          ["Total Trades", totalTrades],
           ["Win / Loss", `${wins} / ${losses}`],
           ["Win Rate", `${winRate}%`],
           ["Trades Today", `${todayTrades} / ${CONFIG.maxTradesPerDay}`],
@@ -699,7 +728,7 @@ function runEMACrossCheck(price, candles) {
   }
 
   const allPass = results.every(r => r.pass);
-  const direction = (bullCross || ema9 > ema21) ? "long" : "short";
+  const direction = (ema9 == null || ema21 == null) ? null : (bullCross || ema9 > ema21) ? "long" : "short";
   return { results, allPass, direction };
 }
 
@@ -836,11 +865,11 @@ function checkExitConditions(position, price, ema8, vwap, rsi3) {
   if (hasMinProfit) {
     if (isLong) {
       check("RSI(3) crossed back above 50", rsi3 > 50);
-      check("Price touched VWAP", Math.abs(price - vwap) / vwap < 0.001);
+      check("Price touched VWAP", vwap != null && Math.abs(price - vwap) / vwap < 0.001);
       check("Price crossed below EMA(8)", price < ema8);
     } else {
       check("RSI(3) crossed back below 50", rsi3 < 50);
-      check("Price touched VWAP", Math.abs(price - vwap) / vwap < 0.001);
+      check("Price touched VWAP", vwap != null && Math.abs(price - vwap) / vwap < 0.001);
       check("Price crossed above EMA(8)", price > ema8);
     }
   } else {
@@ -986,7 +1015,7 @@ function writeTradeCsv(logEntry) {
     orderId = "BLOCKED";
     notes = `Failed: ${failed}`;
   } else {
-    side = "BUY";
+    side = logEntry.side === "short" ? "SELL SHORT" : "BUY";
     quantity = (logEntry.tradeSize / logEntry.price).toFixed(6);
     entryPrice = logEntry.price.toFixed(2);
     totalUSD = logEntry.tradeSize.toFixed(2);
@@ -1238,7 +1267,7 @@ async function run() {
     },
   };
 
-  if (!allPass) {
+  if (!allPass || direction === null) {
     const failed = results.filter((r) => !r.pass).map((r) => r.label);
     console.log(`🚫 TRADE BLOCKED`);
     console.log(`   Failed conditions:`);
@@ -1280,6 +1309,7 @@ async function run() {
     }
 
     if (logEntry.orderPlaced) {
+      logEntry.side = isShort ? "short" : "long";
       await savePosition({
         symbol: CONFIG.symbol,
         side: isShort ? "short" : "long",
