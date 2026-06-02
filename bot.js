@@ -579,7 +579,8 @@ function runSafetyCheck(price, ema8, vwap, rsi3, rules) {
   }
 
   const allPass = results.every((r) => r.pass);
-  return { results, allPass };
+  const direction = bullishBias ? "long" : bearishBias ? "short" : null;
+  return { results, allPass, direction };
 }
 
 // ─── Crypto Face Strategy Check ──────────────────────────────────────────────
@@ -633,7 +634,8 @@ function runCryptoFaceCheck(price, candles) {
   }
 
   const allPass = results.every(r => r.pass);
-  return { results, allPass, indicators: { ema8, ema13, ema21, wt1, wt2, moneyFlow } };
+  const direction = bullishRibbon ? "long" : bearishRibbon ? "short" : null;
+  return { results, allPass, indicators: { ema8, ema13, ema21, wt1, wt2, moneyFlow }, direction };
 }
 
 // ─── Trade Limits ────────────────────────────────────────────────────────────
@@ -697,7 +699,8 @@ function runEMACrossCheck(price, candles) {
   }
 
   const allPass = results.every(r => r.pass);
-  return { results, allPass };
+  const direction = (bullCross || ema9 > ema21) ? "long" : "short";
+  return { results, allPass, direction };
 }
 
 function checkTradeLimits(log) {
@@ -1191,7 +1194,7 @@ async function run() {
 
   // ── No open position — check entry ────────────────────────────────────────
 
-  // Daily EMA(50) macro trend filter — only enter longs if price > daily EMA(50)
+  // Daily EMA(50) macro trend filter — informational only, allows both longs (above) and shorts (below)
   if (!isCryptoFace && !isEMACross) {
     try {
       console.log("\n── Daily Trend Filter (EMA 50) ─────────────────────────\n");
@@ -1200,27 +1203,14 @@ async function run() {
       const dailyEma50 = calcEMA(dailyCloses, 50);
       const aboveDailyEma = price > dailyEma50;
       console.log(`  Daily EMA(50): $${dailyEma50.toFixed(2)} | Price: $${price.toFixed(2)}`);
-      console.log(`  ${aboveDailyEma ? "✅" : "🚫"} Price ${aboveDailyEma ? "above" : "below"} daily EMA(50) — ${aboveDailyEma ? "macro uptrend OK" : "macro downtrend, no longs"}`);
-      if (!aboveDailyEma) {
-        console.log("\n🚫 TRADE BLOCKED — price below daily EMA(50), avoiding longs in macro downtrend.");
-        await appendToSheet([
-          new Date().toISOString().slice(0, 10),
-          new Date().toISOString().slice(11, 19),
-          CONFIG.symbol, "BLOCKED",
-          price.toFixed(2), "", `$${tradeSize.toFixed(2)}`, "", "",
-          CONFIG.paperTrading ? "PAPER" : "LIVE",
-          `Daily EMA(50) filter: price $${price.toFixed(2)} < EMA50 $${dailyEma50.toFixed(2)}`,
-        ]);
-        await updateBalanceSheet(log);
-        return;
-      }
+      console.log(`  ${aboveDailyEma ? "✅ Macro uptrend — long bias" : "📉 Macro downtrend — short bias"}`);
     } catch (err) {
       console.log(`  ⚠️  Daily EMA filter skipped: ${err.message}`);
     }
   }
 
   // Run safety check — dispatch to correct strategy
-  const { results, allPass } = isCryptoFace
+  const { results, allPass, direction } = isCryptoFace
     ? runCryptoFaceCheck(price, candles)
     : isEMACross
       ? runEMACrossCheck(price, candles)
@@ -1264,18 +1254,22 @@ async function run() {
   } else {
     console.log(`✅ ALL CONDITIONS MET`);
 
-    const stopLoss = price * (1 - 0.005); // 0.5% below entry for longs
+    const isShort = direction === "short";
+    const stopLoss = isShort
+      ? price * (1 + 0.005)  // 0.5% above entry for shorts
+      : price * (1 - 0.005); // 0.5% below entry for longs
     const quantity = (tradeSize / price).toFixed(6);
 
     if (CONFIG.paperTrading) {
-      console.log(`\n📋 PAPER TRADE — buying ${CONFIG.symbol} ~$${tradeSize.toFixed(2)} at market`);
-      console.log(`   Stop loss: $${stopLoss.toFixed(2)} (0.3% below entry)`);
+      console.log(`\n📋 PAPER TRADE — ${isShort ? "SHORT SELLING" : "BUYING"} ${CONFIG.symbol} ~$${tradeSize.toFixed(2)} at market`);
+      console.log(`   Stop loss: $${stopLoss.toFixed(2)} (0.5% ${isShort ? "above" : "below"} entry)`);
       logEntry.orderPlaced = true;
       logEntry.orderId = `PAPER-${Date.now()}`;
     } else {
-      console.log(`\n🔴 PLACING LIVE ORDER — $${tradeSize.toFixed(2)} BUY ${CONFIG.symbol}`);
+      const orderSide = isShort ? "sell" : "buy";
+      console.log(`\n🔴 PLACING LIVE ORDER — $${tradeSize.toFixed(2)} ${orderSide.toUpperCase()} ${CONFIG.symbol}`);
       try {
-        const order = await placeBitGetOrder(CONFIG.symbol, "buy", tradeSize, price);
+        const order = await placeBitGetOrder(CONFIG.symbol, orderSide, tradeSize, price);
         logEntry.orderPlaced = true;
         logEntry.orderId = order.orderId;
         console.log(`✅ ORDER PLACED — ${order.orderId}`);
@@ -1288,7 +1282,7 @@ async function run() {
     if (logEntry.orderPlaced) {
       await savePosition({
         symbol: CONFIG.symbol,
-        side: "long",
+        side: isShort ? "short" : "long",
         entryPrice: price,
         entryTime: new Date().toISOString(),
         quantity,
@@ -1300,13 +1294,13 @@ async function run() {
       await appendToSheet([
         new Date().toISOString().slice(0, 10),
         new Date().toISOString().slice(11, 19),
-        CONFIG.symbol, "ENTRY",
+        CONFIG.symbol, `ENTRY ${isShort ? "SHORT" : "LONG"}`,
         price.toFixed(2), "", `$${tradeSize.toFixed(2)}`, "", "",
         CONFIG.paperTrading ? "PAPER" : "LIVE",
-        `Stop loss: $${stopLoss.toFixed(2)}`,
+        `${isShort ? "Short" : "Long"} — stop loss: $${stopLoss.toFixed(2)}`,
       ]);
       await sendTelegram(
-        `🟢 <b>${CONFIG.paperTrading ? "PAPER " : ""}ENTRY</b>\n` +
+        `${isShort ? "🔴" : "🟢"} <b>${CONFIG.paperTrading ? "PAPER " : ""}ENTRY ${isShort ? "SHORT" : "LONG"}</b>\n` +
         `Symbol: ${CONFIG.symbol}\n` +
         `Price: $${price.toFixed(2)}\n` +
         `Size: $${tradeSize.toFixed(2)}\n` +
