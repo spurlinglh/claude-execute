@@ -640,22 +640,22 @@ function runCryptoFaceCheck(price, candles) {
   console.log(`  WaveTrend: WT1=${wt1.toFixed(2)} / WT2=${wt2.toFixed(2)}`);
   console.log(`  Money Flow: ${moneyFlow.toFixed(2)}`);
 
-  // WaveTrend bullish: WT1 above WT2 and below 0 (momentum turning up from lows)
-  const wtBullishCross = wt1 > wt2 && wt1 < 0;
-  // WaveTrend bearish: WT1 below WT2 and above 0 (momentum turning down from highs)
-  const wtBearishCross = wt1 < wt2 && wt1 > 0;
+  // WaveTrend bullish: WT1 above WT2 in oversold zone (< -40) — high-conviction entry
+  const wtBullishCross = wt1 > wt2 && wt1 < -40;
+  // WaveTrend bearish: WT1 below WT2 in overbought zone (> +40) — high-conviction entry
+  const wtBearishCross = wt1 < wt2 && wt1 > 40;
 
   if (bullishRibbon) {
     console.log("  Bias: BULLISH RIBBON — checking long entry\n");
     check("EMA ribbon bullish (8 > 13 > 21)", "8>13>21", `${ema8.toFixed(0)}>${ema13.toFixed(0)}>${ema21.toFixed(0)}`, bullishRibbon);
     check("Price above EMA ribbon", `> ${ema21.toFixed(2)}`, price.toFixed(2), price > ema21);
-    check("WaveTrend bullish cross in oversold", "WT1 crosses above WT2 below -40", `WT1=${wt1.toFixed(1)}`, wtBullishCross);
+    check("WaveTrend bullish cross in oversold (<-40)", "WT1 > WT2 & WT1 < -40", `WT1=${wt1.toFixed(1)} WT2=${wt2.toFixed(1)}`, wtBullishCross);
     check("Money Flow positive", "> 0", moneyFlow.toFixed(2), moneyFlow > 0);
   } else if (bearishRibbon) {
     console.log("  Bias: BEARISH RIBBON — checking short entry\n");
     check("EMA ribbon bearish (8 < 13 < 21)", "8<13<21", `${ema8.toFixed(0)}<${ema13.toFixed(0)}<${ema21.toFixed(0)}`, bearishRibbon);
     check("Price below EMA ribbon", `< ${ema21.toFixed(2)}`, price.toFixed(2), price < ema21);
-    check("WaveTrend bearish cross in overbought", "WT1 crosses below WT2 above +40", `WT1=${wt1.toFixed(1)}`, wtBearishCross);
+    check("WaveTrend bearish cross in overbought (>+40)", "WT1 < WT2 & WT1 > 40", `WT1=${wt1.toFixed(1)} WT2=${wt2.toFixed(1)}`, wtBearishCross);
     check("Money Flow negative", "< 0", moneyFlow.toFixed(2), moneyFlow < 0);
   } else {
     console.log("  Bias: NEUTRAL RIBBON — no clear trend. No trade.\n");
@@ -717,14 +717,14 @@ function runEMACrossCheck(price, candles) {
     check("Fresh bullish EMA cross", "EMA9 crossed above EMA21", bullCross ? "YES" : "holding above", ema9 > ema21);
     check("Price above VWAP", vwap ? `> $${vwap.toFixed(2)}` : "N/A", price.toFixed(2), vwap ? price > vwap : false);
     check("RSI(14) in range 35-65", "35-65", rsi14?.toFixed(2), rsi14 >= 35 && rsi14 <= 65);
-    check("Volume above average", "> 0.8x avg", `${volRatio.toFixed(2)}x`, volRatio >= 0.8);
+    check("Volume above average", "> 0.6x avg", `${volRatio.toFixed(2)}x`, volRatio >= 0.6);
   } else {
     console.log("  Bias: BEARISH — checking short entry\n");
     check("EMA(9) below EMA(21)", `< ${ema21?.toFixed(2)}`, ema9?.toFixed(2), ema9 < ema21);
     check("Fresh bearish EMA cross", "EMA9 crossed below EMA21", bearCross ? "YES" : "holding below", ema9 < ema21);
     check("Price below VWAP", vwap ? `< $${vwap.toFixed(2)}` : "N/A", price.toFixed(2), vwap ? price < vwap : false);
     check("RSI(14) in range 35-65", "35-65", rsi14?.toFixed(2), rsi14 >= 35 && rsi14 <= 65);
-    check("Volume above average", "> 0.8x avg", `${volRatio.toFixed(2)}x`, volRatio >= 0.8);
+    check("Volume above average", "> 0.6x avg", `${volRatio.toFixed(2)}x`, volRatio >= 0.6);
   }
 
   const allPass = results.every(r => r.pass);
@@ -839,7 +839,8 @@ async function clearPosition() {
 
 // ─── Exit Check ──────────────────────────────────────────────────────────────
 
-function checkExitConditions(position, price, ema8, vwap, rsi3) {
+function checkExitConditions(position, price, ema8, vwap, rsiValue, options = {}) {
+  const { minProfitPct = 0.5, wt1 = null, wt2 = null } = options;
   const results = [];
   const isLong = position.side === "long";
 
@@ -848,7 +849,6 @@ function checkExitConditions(position, price, ema8, vwap, rsi3) {
 
   const priceDiff = isLong ? price - position.entryPrice : position.entryPrice - price;
   const currentPnlPct = (priceDiff / position.entryPrice) * 100;
-  const minProfitPct = 0.5;
   const hasMinProfit = currentPnlPct >= minProfitPct;
   console.log(`  Current P&L: ${currentPnlPct >= 0 ? "+" : ""}${currentPnlPct.toFixed(3)}% (min for soft exit: ${minProfitPct}%)`);
 
@@ -862,13 +862,20 @@ function checkExitConditions(position, price, ema8, vwap, rsi3) {
     : price >= position.stopLoss;
   check(`Hard stop hit (${position.stopLoss.toFixed(2)})`, stopHit);
 
-  if (hasMinProfit) {
+  if (wt1 != null && wt2 != null) {
+    // Crypto Face: WaveTrend reversal exit (signal-based, not profit-gated)
+    const wtReversed = isLong
+      ? (wt1 < wt2 && wt1 > 0)
+      : (wt1 > wt2 && wt1 < 0);
+    check("WaveTrend reversed against position", wtReversed);
+    check("WaveTrend at extreme (|WT1| > 60)", Math.abs(wt1) > 60);
+  } else if (hasMinProfit) {
     if (isLong) {
-      check("RSI(3) crossed back above 50", rsi3 > 50);
+      check("RSI crossed back above 50", rsiValue > 50);
       check("Price touched VWAP", vwap != null && Math.abs(price - vwap) / vwap < 0.001);
       check("Price crossed below EMA(8)", price < ema8);
     } else {
-      check("RSI(3) crossed back below 50", rsi3 < 50);
+      check("RSI crossed back below 50", rsiValue < 50);
       check("Price touched VWAP", vwap != null && Math.abs(price - vwap) / vwap < 0.001);
       check("Price crossed above EMA(8)", price > ema8);
     }
@@ -1123,6 +1130,8 @@ async function run() {
   const ema8 = calcEMA(closes, 8);
   const vwap = calcVWAP(candles);
   const rsi3 = calcRSI(closes, 3);
+  const rsi14 = isEMACross ? calcRSI(closes, 14) : null;
+  const wtForExit = isCryptoFace ? calcWaveTrend(candles) : null;
 
   if (!isCryptoFace) {
     console.log(`  EMA(8):  $${ema8.toFixed(2)}`);
@@ -1141,7 +1150,13 @@ async function run() {
   const openPosition = await loadPosition();
 
   if (openPosition && openPosition.symbol === CONFIG.symbol) {
-    const { shouldExit, reason } = checkExitConditions(openPosition, price, ema8, vwap, rsi3);
+    const exitOptions = isCryptoFace
+      ? { minProfitPct: 1.5, wt1: wtForExit?.wt1, wt2: wtForExit?.wt2 }
+      : isEMACross
+        ? { minProfitPct: 0.4 }
+        : { minProfitPct: 0.25 };
+    const exitRsi = isEMACross ? rsi14 : rsi3;
+    const { shouldExit, reason } = checkExitConditions(openPosition, price, ema8, vwap, exitRsi, exitOptions);
 
     if (shouldExit) {
       const { pnlUSD, pnlPct } = calcPnL(openPosition, price);
@@ -1223,7 +1238,8 @@ async function run() {
 
   // ── No open position — check entry ────────────────────────────────────────
 
-  // Daily EMA(50) macro trend filter — informational only, allows both longs (above) and shorts (below)
+  // Daily EMA(50) macro trend filter — hard directional constraint for VWAP bot
+  let dailyEmaDirection = null;
   if (!isCryptoFace && !isEMACross) {
     try {
       console.log("\n── Daily Trend Filter (EMA 50) ─────────────────────────\n");
@@ -1231,8 +1247,9 @@ async function run() {
       const dailyCloses = dailyCandles.map(c => c.close);
       const dailyEma50 = calcEMA(dailyCloses, 50);
       const aboveDailyEma = price > dailyEma50;
+      dailyEmaDirection = aboveDailyEma ? "long" : "short";
       console.log(`  Daily EMA(50): $${dailyEma50.toFixed(2)} | Price: $${price.toFixed(2)}`);
-      console.log(`  ${aboveDailyEma ? "✅ Macro uptrend — long bias" : "📉 Macro downtrend — short bias"}`);
+      console.log(`  ${aboveDailyEma ? "✅ Macro uptrend — LONGS ONLY" : "📉 Macro downtrend — SHORTS ONLY"}`);
     } catch (err) {
       console.log(`  ⚠️  Daily EMA filter skipped: ${err.message}`);
     }
@@ -1280,18 +1297,29 @@ async function run() {
       CONFIG.paperTrading ? "PAPER" : "LIVE",
       `Failed: ${failed.join("; ")}`,
     ]);
+  } else if (dailyEmaDirection && direction !== dailyEmaDirection) {
+    console.log(`🚫 MACRO FILTER — ${direction.toUpperCase()} blocked (daily EMA50 allows ${dailyEmaDirection.toUpperCase()} only)`);
+    await appendToSheet([
+      new Date().toISOString().slice(0, 10),
+      new Date().toISOString().slice(11, 19),
+      CONFIG.symbol, "BLOCKED",
+      price.toFixed(2), "", `$${tradeSize.toFixed(2)}`, "", "",
+      CONFIG.paperTrading ? "PAPER" : "LIVE",
+      `Macro filter: ${direction} blocked by daily EMA50 (${dailyEmaDirection} only)`,
+    ]);
   } else {
     console.log(`✅ ALL CONDITIONS MET`);
 
     const isShort = direction === "short";
+    const stopPct = isCryptoFace ? 0.02 : isEMACross ? 0.005 : 0.003;
     const stopLoss = isShort
-      ? price * (1 + 0.005)  // 0.5% above entry for shorts
-      : price * (1 - 0.005); // 0.5% below entry for longs
+      ? price * (1 + stopPct)
+      : price * (1 - stopPct);
     const quantity = (tradeSize / price).toFixed(6);
 
     if (CONFIG.paperTrading) {
       console.log(`\n📋 PAPER TRADE — ${isShort ? "SHORT SELLING" : "BUYING"} ${CONFIG.symbol} ~$${tradeSize.toFixed(2)} at market`);
-      console.log(`   Stop loss: $${stopLoss.toFixed(2)} (0.5% ${isShort ? "above" : "below"} entry)`);
+      console.log(`   Stop loss: $${stopLoss.toFixed(2)} (${(stopPct * 100).toFixed(1)}% ${isShort ? "above" : "below"} entry)`);
       logEntry.orderPlaced = true;
       logEntry.orderId = `PAPER-${Date.now()}`;
     } else {
