@@ -1153,7 +1153,7 @@ async function run() {
     const exitOptions = isCryptoFace
       ? { minProfitPct: 1.5, wt1: wtForExit?.wt1, wt2: wtForExit?.wt2 }
       : isEMACross
-        ? { minProfitPct: 0.4 }
+        ? { minProfitPct: 1.5 }
         : { minProfitPct: 0.25 };
     const exitRsi = isEMACross ? rsi14 : rsi3;
     const { shouldExit, reason } = checkExitConditions(openPosition, price, ema8, vwap, exitRsi, exitOptions);
