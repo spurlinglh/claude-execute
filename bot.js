@@ -868,7 +868,7 @@ function checkExitConditions(position, price, ema8, vwap, rsiValue, options = {}
       ? (wt1 < wt2 && wt1 > 0)
       : (wt1 > wt2 && wt1 < 0);
     check("WaveTrend reversed against position", wtReversed);
-    check("WaveTrend at extreme (|WT1| > 60)", Math.abs(wt1) > 60);
+    check("WaveTrend at extreme (|WT1| > 60)", isLong ? wt1 > 60 : wt1 < -60);
   } else if (hasMinProfit) {
     if (isLong) {
       check("RSI crossed back above 50", rsiValue > 50);
@@ -1238,20 +1238,33 @@ async function run() {
 
   // ── No open position — check entry ────────────────────────────────────────
 
-  // Daily EMA(50) macro trend filter — hard directional constraint for VWAP bot
+  // Daily macro trend filter — hard directional constraint
   let dailyEmaDirection = null;
-  if (!isCryptoFace && !isEMACross) {
+  if (!isEMACross) {
     try {
-      console.log("\n── Daily Trend Filter (EMA 50) ─────────────────────────\n");
+      console.log("\n── Daily Trend Filter ───────────────────────────────────\n");
       const dailyCandles = await fetchCandles(CONFIG.symbol, "1D", 60);
       const dailyCloses = dailyCandles.map(c => c.close);
-      const dailyEma50 = calcEMA(dailyCloses, 50);
-      const aboveDailyEma = price > dailyEma50;
-      dailyEmaDirection = aboveDailyEma ? "long" : "short";
-      console.log(`  Daily EMA(50): $${dailyEma50.toFixed(2)} | Price: $${price.toFixed(2)}`);
-      console.log(`  ${aboveDailyEma ? "✅ Macro uptrend — LONGS ONLY" : "📉 Macro downtrend — SHORTS ONLY"}`);
+      if (isCryptoFace) {
+        // Crypto Face: daily EMA ribbon (8/13/21) must align with trade direction
+        const dailyEma8  = calcEMA(dailyCloses, 8);
+        const dailyEma13 = calcEMA(dailyCloses, 13);
+        const dailyEma21 = calcEMA(dailyCloses, 21);
+        const dailyBullish = dailyEma8 > dailyEma13 && dailyEma13 > dailyEma21;
+        const dailyBearish = dailyEma8 < dailyEma13 && dailyEma13 < dailyEma21;
+        dailyEmaDirection = dailyBullish ? "long" : dailyBearish ? "short" : null;
+        console.log(`  Daily ribbon: EMA8=${dailyEma8.toFixed(0)} / EMA13=${dailyEma13.toFixed(0)} / EMA21=${dailyEma21.toFixed(0)}`);
+        console.log(`  ${dailyBullish ? "✅ Daily ribbon BULLISH — LONGS ONLY" : dailyBearish ? "📉 Daily ribbon BEARISH — SHORTS ONLY" : "⚠️  Daily ribbon MIXED — no trade"}`);
+      } else {
+        // VWAP bot: daily EMA(50) above/below price
+        const dailyEma50 = calcEMA(dailyCloses, 50);
+        const aboveDailyEma = price > dailyEma50;
+        dailyEmaDirection = aboveDailyEma ? "long" : "short";
+        console.log(`  Daily EMA(50): $${dailyEma50.toFixed(2)} | Price: $${price.toFixed(2)}`);
+        console.log(`  ${aboveDailyEma ? "✅ Macro uptrend — LONGS ONLY" : "📉 Macro downtrend — SHORTS ONLY"}`);
+      }
     } catch (err) {
-      console.log(`  ⚠️  Daily EMA filter skipped: ${err.message}`);
+      console.log(`  ⚠️  Daily trend filter skipped: ${err.message}`);
     }
   }
 
@@ -1296,6 +1309,16 @@ async function run() {
       price.toFixed(2), "", `$${tradeSize.toFixed(2)}`, "", "",
       CONFIG.paperTrading ? "PAPER" : "LIVE",
       `Failed: ${failed.join("; ")}`,
+    ]);
+  } else if (isCryptoFace && dailyEmaDirection === null) {
+    console.log(`🚫 MACRO FILTER — daily ribbon mixed, no clear trend. No trade.`);
+    await appendToSheet([
+      new Date().toISOString().slice(0, 10),
+      new Date().toISOString().slice(11, 19),
+      CONFIG.symbol, "BLOCKED",
+      price.toFixed(2), "", `$${tradeSize.toFixed(2)}`, "", "",
+      CONFIG.paperTrading ? "PAPER" : "LIVE",
+      `Macro filter: daily ribbon mixed`,
     ]);
   } else if (dailyEmaDirection && direction !== dailyEmaDirection) {
     console.log(`🚫 MACRO FILTER — ${direction.toUpperCase()} blocked (daily EMA50 allows ${dailyEmaDirection.toUpperCase()} only)`);
