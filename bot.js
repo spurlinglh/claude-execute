@@ -1087,6 +1087,16 @@ function generateTaxSummary() {
   console.log("─────────────────────────────────────────────────────────\n");
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function timeframeToMs(tf) {
+  const m = tf.match(/^(\d+)([mhd])$/i);
+  if (!m) return 60000;
+  const n = parseInt(m[1]);
+  const u = m[2].toLowerCase();
+  return n * (u === "m" ? 60000 : u === "h" ? 3600000 : 86400000);
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 const LOCK_FILE = "./bot.lock";
@@ -1159,6 +1169,24 @@ async function run() {
   const openPosition = await loadPosition();
 
   if (openPosition && openPosition.symbol === CONFIG.symbol) {
+    // Trailing stop — ratchets in profit direction, never reverses
+    const trail = isCryptoFace
+      ? { activationPct: 0.015, trailPct: 0.010 }
+      : isEMACross
+        ? { activationPct: 0.010, trailPct: 0.005 }
+        : { activationPct: 0.005, trailPct: 0.003 };
+    const isLong = openPosition.side === "long";
+    const pnlPct = (isLong ? price - openPosition.entryPrice : openPosition.entryPrice - price) / openPosition.entryPrice;
+    if (pnlPct >= trail.activationPct) {
+      const trailedStop = isLong ? price * (1 - trail.trailPct) : price * (1 + trail.trailPct);
+      const improved = isLong ? trailedStop > openPosition.stopLoss : trailedStop < openPosition.stopLoss;
+      if (improved) {
+        console.log(`  ↑ Trailing stop: $${openPosition.stopLoss.toFixed(2)} → $${trailedStop.toFixed(2)}`);
+        openPosition.stopLoss = trailedStop;
+        await savePosition(openPosition);
+      }
+    }
+
     const exitOptions = isCryptoFace
       ? { minProfitPct: 1.5, wt1: wtForExit?.wt1, wt2: wtForExit?.wt2 }
       : isEMACross
@@ -1246,6 +1274,26 @@ async function run() {
   }
 
   // ── No open position — check entry ────────────────────────────────────────
+
+  // Re-entry guard: block entry within 2 candles of last exit
+  const recentExit = [...log.trades].reverse().find(t => t.type === "EXIT" && t.symbol === CONFIG.symbol);
+  if (recentExit) {
+    const msSinceExit = Date.now() - new Date(recentExit.timestamp).getTime();
+    const cooldownMs = 2 * timeframeToMs(CONFIG.timeframe);
+    if (msSinceExit < cooldownMs) {
+      const waitMin = Math.round((cooldownMs - msSinceExit) / 60000);
+      console.log(`\n⏳ RE-ENTRY GUARD — last exit ${Math.round(msSinceExit / 60000)}m ago, ${waitMin}m cooldown remaining`);
+      await appendToSheet([
+        new Date().toISOString().slice(0, 10),
+        new Date().toISOString().slice(11, 19),
+        CONFIG.symbol, "BLOCKED",
+        price.toFixed(2), "", `$${tradeSize.toFixed(2)}`, "", "",
+        CONFIG.paperTrading ? "PAPER" : "LIVE",
+        `Re-entry guard: ${waitMin}m cooldown`,
+      ]);
+      return;
+    }
+  }
 
   // Daily macro trend filter — hard directional constraint
   let dailyEmaDirection = null;
