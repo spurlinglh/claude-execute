@@ -10,7 +10,7 @@
  */
 
 import "dotenv/config";
-import { readFileSync, writeFileSync, existsSync, appendFileSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, appendFileSync, unlinkSync } from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 
@@ -825,16 +825,16 @@ async function clearPosition() {
     try {
       const token = await getGoogleAccessToken();
       if (token) {
-        await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${POSITION_TAB}!A2:H2:clear`,
+        const res = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(POSITION_TAB)}!A2:H2:clear`,
           { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
         );
-        console.log("Position cleared from Google Sheets ✓");
-        return;
+        if (!res.ok) console.log(`Sheet clear returned HTTP ${res.status}`);
+        else console.log("Position cleared from Google Sheets ✓");
       }
     } catch (err) { console.log(`Failed to clear position from sheet: ${err.message}`); }
   }
-  if (existsSync(POSITION_FILE)) writeFileSync(POSITION_FILE, "null");
+  try { if (existsSync(POSITION_FILE)) unlinkSync(POSITION_FILE); } catch {}
 }
 
 // ─── Exit Check ──────────────────────────────────────────────────────────────
@@ -1089,7 +1089,16 @@ function generateTaxSummary() {
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
+const LOCK_FILE = "./bot.lock";
+
 async function run() {
+  if (existsSync(LOCK_FILE)) {
+    console.log("Bot already running (lock file exists), exiting.");
+    process.exit(0);
+  }
+  writeFileSync(LOCK_FILE, String(process.pid));
+  process.on("exit", () => { try { unlinkSync(LOCK_FILE); } catch {} });
+
   checkOnboarding();
   initCsv();
   await ensureSheetHeaders();
