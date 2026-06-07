@@ -12,6 +12,8 @@
 import "dotenv/config";
 import { readFileSync, writeFileSync, existsSync, appendFileSync, unlinkSync } from "fs";
 import crypto from "crypto";
+import os from "os";
+import { join } from "path";
 import { execSync } from "child_process";
 
 // ─── Google Sheets ────────────────────────────────────────────────────────────
@@ -327,6 +329,7 @@ const CONFIG = {
   timeframe: process.env.TIMEFRAME || "5m",
   portfolioValue: parseFloat(process.env.PORTFOLIO_VALUE_USD || "1000"),
   maxTradeSizeUSD: parseFloat(process.env.MAX_TRADE_SIZE_USD || "100"),
+  riskPerTradeUSD: parseFloat(process.env.RISK_PER_TRADE_USD || "0"), // 0 = disabled, use flat sizing
   maxTradesPerDay: parseInt(process.env.MAX_TRADES_PER_DAY || "5"),
   paperTrading: process.env.PAPER_TRADING !== "false",
   tradeMode: process.env.TRADE_MODE || "spot",
@@ -703,9 +706,16 @@ function runEMACrossCheck(price, candles) {
   const bullCross = prevEma9 <= prevEma21 && ema9 > ema21;
   const bearCross = prevEma9 >= prevEma21 && ema9 < ema21;
 
+  // Trend strength — EMA9/21 gap must be widening (momentum expanding, not chop)
+  const gap = Math.abs(ema9 - ema21);
+  const prevGap = Math.abs(prevEma9 - prevEma21);
+  const gapWidening = gap > prevGap;
+  const gapPct = price > 0 ? (gap / price) * 100 : 0;
+
   console.log(`  EMA(9):  $${ema9?.toFixed(2)} | EMA(21): $${ema21?.toFixed(2)}`);
   console.log(`  RSI(14): ${rsi14?.toFixed(2)} | VWAP: $${vwap?.toFixed(2)}`);
   console.log(`  Volume ratio: ${volRatio.toFixed(2)}x average`);
+  console.log(`  EMA gap: ${gapPct.toFixed(3)}% | widening: ${gapWidening}`);
   console.log(`  Bull cross: ${bullCross} | Bear cross: ${bearCross}`);
 
   const bullish = bullCross || (ema9 > ema21 && price > (vwap || 0));
@@ -718,6 +728,7 @@ function runEMACrossCheck(price, candles) {
     check("Price above VWAP", vwap ? `> $${vwap.toFixed(2)}` : "N/A", price.toFixed(2), vwap ? price > vwap : false);
     check("RSI(14) in range 35-65", "35-65", rsi14?.toFixed(2), rsi14 >= 35 && rsi14 <= 65);
     check("Volume above average", "> 0.6x avg", `${volRatio.toFixed(2)}x`, volRatio >= 0.6);
+    check("Trend strengthening (EMA gap widening)", "gap > prev gap", gapWidening ? "YES" : "NO", gapWidening);
   } else {
     console.log("  Bias: BEARISH — checking short entry\n");
     check("EMA(9) below EMA(21)", `< ${ema21?.toFixed(2)}`, ema9?.toFixed(2), ema9 < ema21);
@@ -725,6 +736,7 @@ function runEMACrossCheck(price, candles) {
     check("Price below VWAP", vwap ? `< $${vwap.toFixed(2)}` : "N/A", price.toFixed(2), vwap ? price < vwap : false);
     check("RSI(14) in range 35-65", "35-65", rsi14?.toFixed(2), rsi14 >= 35 && rsi14 <= 65);
     check("Volume above average", "> 0.6x avg", `${volRatio.toFixed(2)}x`, volRatio >= 0.6);
+    check("Trend strengthening (EMA gap widening)", "gap > prev gap", gapWidening ? "YES" : "NO", gapWidening);
   }
 
   const allPass = results.every(r => r.pass);
@@ -1099,12 +1111,22 @@ function timeframeToMs(tf) {
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
-const LOCK_FILE = "./bot.lock";
+// Lock keyed to the strategy tab, in the shared temp dir — blocks a second
+// instance of the SAME strategy even when launched from a different directory.
+const LOCK_FILE = join(os.tmpdir(), `claude-bot-${TRADE_TAB.replace(/[^a-z0-9]/gi, "_")}.lock`);
+
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
 
 async function run() {
   if (existsSync(LOCK_FILE)) {
-    console.log("Bot already running (lock file exists), exiting.");
-    process.exit(0);
+    const existingPid = parseInt(readFileSync(LOCK_FILE, "utf8"));
+    if (existingPid && pidAlive(existingPid) && existingPid !== process.pid) {
+      console.log(`Bot already running for "${TRADE_TAB}" (PID ${existingPid}), exiting.`);
+      process.exit(0);
+    }
+    console.log("Stale lock found — previous process is gone, taking over.");
   }
   writeFileSync(LOCK_FILE, String(process.pid));
   process.on("exit", () => { try { unlinkSync(LOCK_FILE); } catch {} });
@@ -1162,8 +1184,8 @@ async function run() {
     }
   }
 
-  // Calculate position size — use maxTradeSizeUSD directly
-  const tradeSize = CONFIG.maxTradeSizeUSD;
+  // Position size — recomputed at entry if risk-based sizing is enabled
+  let tradeSize = CONFIG.maxTradeSizeUSD;
 
   // ── Check exit first if we have an open position ──────────────────────────
   const openPosition = await loadPosition();
@@ -1395,6 +1417,14 @@ async function run() {
     const stopLoss = isShort
       ? price * (1 + stopPct)
       : price * (1 - stopPct);
+
+    // Risk-based sizing: size so a stop-out loses ~riskPerTradeUSD, capped at maxTradeSizeUSD
+    if (CONFIG.riskPerTradeUSD > 0) {
+      const riskSized = CONFIG.riskPerTradeUSD / stopPct;
+      tradeSize = Math.min(riskSized, CONFIG.maxTradeSizeUSD);
+      console.log(`   Risk-based size: $${tradeSize.toFixed(2)} (risk $${CONFIG.riskPerTradeUSD} ÷ ${(stopPct * 100).toFixed(2)}% stop, capped at $${CONFIG.maxTradeSizeUSD})`);
+    }
+
     const quantity = (tradeSize / price).toFixed(6);
 
     if (CONFIG.paperTrading) {
