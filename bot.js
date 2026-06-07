@@ -706,16 +706,18 @@ function runEMACrossCheck(price, candles) {
   const bullCross = prevEma9 <= prevEma21 && ema9 > ema21;
   const bearCross = prevEma9 >= prevEma21 && ema9 < ema21;
 
-  // Trend strength — EMA9/21 gap must be widening (momentum expanding, not chop)
+  // Trend strength — skip dead chop. Pass if the EMA9/21 gap is widening OR
+  // already meaningfully wide (established trend). Only flat, pinched EMAs fail.
   const gap = Math.abs(ema9 - ema21);
   const prevGap = Math.abs(prevEma9 - prevEma21);
-  const gapWidening = gap > prevGap;
   const gapPct = price > 0 ? (gap / price) * 100 : 0;
+  const MIN_GAP_PCT = 0.05; // 0.05% — below this the EMAs are basically flat (chop)
+  const trendOk = gap > prevGap || gapPct >= MIN_GAP_PCT;
 
   console.log(`  EMA(9):  $${ema9?.toFixed(2)} | EMA(21): $${ema21?.toFixed(2)}`);
   console.log(`  RSI(14): ${rsi14?.toFixed(2)} | VWAP: $${vwap?.toFixed(2)}`);
   console.log(`  Volume ratio: ${volRatio.toFixed(2)}x average`);
-  console.log(`  EMA gap: ${gapPct.toFixed(3)}% | widening: ${gapWidening}`);
+  console.log(`  EMA gap: ${gapPct.toFixed(3)}% | trend OK: ${trendOk}`);
   console.log(`  Bull cross: ${bullCross} | Bear cross: ${bearCross}`);
 
   const bullish = bullCross || (ema9 > ema21 && price > (vwap || 0));
@@ -728,7 +730,7 @@ function runEMACrossCheck(price, candles) {
     check("Price above VWAP", vwap ? `> $${vwap.toFixed(2)}` : "N/A", price.toFixed(2), vwap ? price > vwap : false);
     check("RSI(14) in range 35-65", "35-65", rsi14?.toFixed(2), rsi14 >= 35 && rsi14 <= 65);
     check("Volume above average", "> 0.6x avg", `${volRatio.toFixed(2)}x`, volRatio >= 0.6);
-    check("Trend strengthening (EMA gap widening)", "gap > prev gap", gapWidening ? "YES" : "NO", gapWidening);
+    check("Trend not flat (EMA gap widening or wide)", "widening or ≥0.05%", trendOk ? "YES" : "NO", trendOk);
   } else {
     console.log("  Bias: BEARISH — checking short entry\n");
     check("EMA(9) below EMA(21)", `< ${ema21?.toFixed(2)}`, ema9?.toFixed(2), ema9 < ema21);
@@ -736,7 +738,7 @@ function runEMACrossCheck(price, candles) {
     check("Price below VWAP", vwap ? `< $${vwap.toFixed(2)}` : "N/A", price.toFixed(2), vwap ? price < vwap : false);
     check("RSI(14) in range 35-65", "35-65", rsi14?.toFixed(2), rsi14 >= 35 && rsi14 <= 65);
     check("Volume above average", "> 0.6x avg", `${volRatio.toFixed(2)}x`, volRatio >= 0.6);
-    check("Trend strengthening (EMA gap widening)", "gap > prev gap", gapWidening ? "YES" : "NO", gapWidening);
+    check("Trend not flat (EMA gap widening or wide)", "widening or ≥0.05%", trendOk ? "YES" : "NO", trendOk);
   }
 
   const allPass = results.every(r => r.pass);
@@ -1218,12 +1220,28 @@ async function run() {
     const { shouldExit, reason } = checkExitConditions(openPosition, price, ema8, vwap, exitRsi, exitOptions);
 
     if (shouldExit) {
-      const { pnlUSD, pnlPct } = calcPnL(openPosition, price);
+      // Hard stop: a real resting stop order fills at the stop level (plus minor
+      // slippage), not at the overshot poll price. Recording the poll price
+      // inflates the loss by the polling-lag overshoot, so cap at the stop.
+      let exitPrice = price;
+      if (reason.startsWith("Hard stop")) {
+        const slip = 0.0005; // 0.05% realistic fill slippage
+        const stopFill = isLong
+          ? openPosition.stopLoss * (1 - slip)
+          : openPosition.stopLoss * (1 + slip);
+        // only use the stop fill if it's better than the overshot poll price
+        exitPrice = isLong ? Math.max(price, stopFill) : Math.min(price, stopFill);
+        if (exitPrice !== price) {
+          console.log(`   Stop fill modeled at $${exitPrice.toFixed(2)} (poll was $${price.toFixed(2)} — overshoot trimmed)`);
+        }
+      }
+
+      const { pnlUSD, pnlPct } = calcPnL(openPosition, exitPrice);
       const pnlSign = pnlUSD >= 0 ? "+" : "";
 
       console.log("\n── Decision ─────────────────────────────────────────────\n");
       console.log(`📤 CLOSING POSITION — ${reason}`);
-      console.log(`   Entry: $${openPosition.entryPrice.toFixed(2)} → Exit: $${price.toFixed(2)}`);
+      console.log(`   Entry: $${openPosition.entryPrice.toFixed(2)} → Exit: $${exitPrice.toFixed(2)}`);
       console.log(`   P&L: ${pnlSign}$${pnlUSD.toFixed(2)} (${pnlSign}${pnlPct.toFixed(3)}%)`);
 
       const exitEntry = {
@@ -1232,7 +1250,7 @@ async function run() {
         symbol: CONFIG.symbol,
         side: openPosition.side,
         entryPrice: openPosition.entryPrice,
-        exitPrice: price,
+        exitPrice,
         quantity: openPosition.quantity,
         sizeUSD: openPosition.sizeUSD,
         pnlUSD,
@@ -1240,7 +1258,7 @@ async function run() {
         exitReason: reason,
         orderId: CONFIG.paperTrading ? `PAPER-EXIT-${Date.now()}` : null,
         paperTrading: CONFIG.paperTrading,
-        price,
+        price: exitPrice,
         conditions: [],
         allPass: true,
       };
