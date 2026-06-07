@@ -552,19 +552,19 @@ function runSafetyCheck(price, ema8, vwap, rsi3, rules) {
 
     // 3. RSI(3) pullback
     check(
-      "RSI(3) below 30 (snap-back setup in uptrend)",
-      "< 30",
+      "RSI(3) below 35 (snap-back setup in uptrend)",
+      "< 35",
       rsi3.toFixed(2),
-      rsi3 < 30,
+      rsi3 < 35,
     );
 
     // 4. Not overextended from VWAP
     const distFromVWAP = Math.abs((price - vwap) / vwap) * 100;
     check(
-      "Price within 1.5% of VWAP (not overextended)",
-      "< 1.5%",
+      "Price within 2% of VWAP (not overextended)",
+      "< 2%",
       `${distFromVWAP.toFixed(2)}%`,
-      distFromVWAP < 1.5,
+      distFromVWAP < 2,
     );
   } else if (bearishBias) {
     console.log("  Bias: BEARISH — checking short entry conditions\n");
@@ -584,18 +584,18 @@ function runSafetyCheck(price, ema8, vwap, rsi3, rules) {
     );
 
     check(
-      "RSI(3) above 70 (reversal setup in downtrend)",
-      "> 70",
+      "RSI(3) above 65 (reversal setup in downtrend)",
+      "> 65",
       rsi3.toFixed(2),
-      rsi3 > 70,
+      rsi3 > 65,
     );
 
     const distFromVWAP = Math.abs((price - vwap) / vwap) * 100;
     check(
-      "Price within 1.5% of VWAP (not overextended)",
-      "< 1.5%",
+      "Price within 2% of VWAP (not overextended)",
+      "< 2%",
       `${distFromVWAP.toFixed(2)}%`,
-      distFromVWAP < 1.5,
+      distFromVWAP < 2,
     );
   } else {
     console.log("  Bias: NEUTRAL — no clear direction. No trade.\n");
@@ -640,22 +640,22 @@ function runCryptoFaceCheck(price, candles) {
   console.log(`  WaveTrend: WT1=${wt1.toFixed(2)} / WT2=${wt2.toFixed(2)}`);
   console.log(`  Money Flow: ${moneyFlow.toFixed(2)}`);
 
-  // WaveTrend bullish: WT1 above WT2 in oversold zone (< -40) — high-conviction entry
-  const wtBullishCross = wt1 > wt2 && wt1 < -40;
-  // WaveTrend bearish: WT1 below WT2 in overbought zone (> +40) — high-conviction entry
-  const wtBearishCross = wt1 < wt2 && wt1 > 40;
+  // WaveTrend bullish: WT1 above WT2 in oversold zone (< -20) — momentum turning up
+  const wtBullishCross = wt1 > wt2 && wt1 < -20;
+  // WaveTrend bearish: WT1 below WT2 in overbought zone (> +20) — momentum turning down
+  const wtBearishCross = wt1 < wt2 && wt1 > 20;
 
   if (bullishRibbon) {
     console.log("  Bias: BULLISH RIBBON — checking long entry\n");
     check("EMA ribbon bullish (8 > 13 > 21)", "8>13>21", `${ema8.toFixed(0)}>${ema13.toFixed(0)}>${ema21.toFixed(0)}`, bullishRibbon);
     check("Price above EMA ribbon", `> ${ema21.toFixed(2)}`, price.toFixed(2), price > ema21);
-    check("WaveTrend bullish cross in oversold (<-40)", "WT1 > WT2 & WT1 < -40", `WT1=${wt1.toFixed(1)} WT2=${wt2.toFixed(1)}`, wtBullishCross);
+    check("WaveTrend bullish cross in oversold (<-20)", "WT1 > WT2 & WT1 < -20", `WT1=${wt1.toFixed(1)} WT2=${wt2.toFixed(1)}`, wtBullishCross);
     check("Money Flow positive", "> 0", moneyFlow.toFixed(2), moneyFlow > 0);
   } else if (bearishRibbon) {
     console.log("  Bias: BEARISH RIBBON — checking short entry\n");
     check("EMA ribbon bearish (8 < 13 < 21)", "8<13<21", `${ema8.toFixed(0)}<${ema13.toFixed(0)}<${ema21.toFixed(0)}`, bearishRibbon);
     check("Price below EMA ribbon", `< ${ema21.toFixed(2)}`, price.toFixed(2), price < ema21);
-    check("WaveTrend bearish cross in overbought (>+40)", "WT1 < WT2 & WT1 > 40", `WT1=${wt1.toFixed(1)} WT2=${wt2.toFixed(1)}`, wtBearishCross);
+    check("WaveTrend bearish cross in overbought (>+20)", "WT1 < WT2 & WT1 > 20", `WT1=${wt1.toFixed(1)} WT2=${wt2.toFixed(1)}`, wtBearishCross);
     check("Money Flow negative", "< 0", moneyFlow.toFixed(2), moneyFlow < 0);
   } else {
     console.log("  Bias: NEUTRAL RIBBON — no clear trend. No trade.\n");
