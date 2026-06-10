@@ -368,53 +368,36 @@ function countTodaysTrades(log) {
 // ─── Market Data (Binance public API — free, no auth) ───────────────────────
 
 async function fetchCandles(symbol, interval, limit = 100) {
-  // Kraken interval map (minutes)
-  const intervalMap = {
-    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-    "1H": 60, "4H": 240, "1D": 1440, "1W": 10080,
-  };
-  const kraken_interval = intervalMap[interval] || 15;
+  // Binance REST API — free, reliable, no IP blocking
+  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
 
-  // Map symbol to Kraken pair (BTCUSDT → XBTUSDT)
-  const pair = symbol.replace("BTC", "XBT");
-
-  const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=${kraken_interval}`;
-
-  // Retry with exponential backoff — Kraken (Cloudflare) can 403/429 cloud IPs
-  // under frequent polling. Don't let a transient block crash the whole run.
   let data;
   let lastErr;
   for (let attempt = 0; attempt < 4; attempt++) {
     if (attempt > 0) {
       const waitMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
-      console.log(`  Kraken fetch retry ${attempt}/3 after ${lastErr} — waiting ${waitMs}ms`);
+      console.log(`  Binance fetch retry ${attempt}/3 after ${lastErr} — waiting ${waitMs}ms`);
       await new Promise((r) => setTimeout(r, waitMs));
     }
     try {
-      const res = await fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0 (trading-bot)", Accept: "application/json" },
-      });
+      const res = await fetch(url);
       if (!res.ok) { lastErr = `HTTP ${res.status}`; continue; }
       data = await res.json();
-      if (data.error && data.error.length > 0) { lastErr = data.error[0]; data = null; continue; }
       break;
     } catch (err) {
       lastErr = err.message;
     }
   }
-  if (!data) throw new Error(`Kraken API error after retries: ${lastErr}`);
+  if (!data) throw new Error(`Binance API error after retries: ${lastErr}`);
 
-  const pairKey = Object.keys(data.result).find(k => k !== "last");
-  const candles = data.result[pairKey];
-
-  // Kraken returns oldest first, limit to last N candles
-  return candles.slice(-limit).map((k) => ({
-    time: k[0] * 1000,
+  // Binance returns [time, open, high, low, close, volume, ...]
+  return data.map((k) => ({
+    time: parseInt(k[0]),
     open: parseFloat(k[1]),
     high: parseFloat(k[2]),
     low: parseFloat(k[3]),
     close: parseFloat(k[4]),
-    volume: parseFloat(k[6]),
+    volume: parseFloat(k[7]),
   }));
 }
 
@@ -711,7 +694,7 @@ function runEMACrossCheck(price, candles) {
   const gap = Math.abs(ema9 - ema21);
   const prevGap = Math.abs(prevEma9 - prevEma21);
   const gapPct = price > 0 ? (gap / price) * 100 : 0;
-  const MIN_GAP_PCT = 0.05; // 0.05% — below this the EMAs are basically flat (chop)
+  const MIN_GAP_PCT = parseFloat(process.env.EMA_GAP_THRESHOLD_PCT || "0.05");
   const trendOk = gap > prevGap || gapPct >= MIN_GAP_PCT;
 
   console.log(`  EMA(9):  $${ema9?.toFixed(2)} | EMA(21): $${ema21?.toFixed(2)}`);
@@ -1159,7 +1142,7 @@ async function run() {
   }
 
   // Fetch candle data
-  console.log("\n── Fetching market data from Kraken ───────────────────\n");
+  console.log("\n── Fetching market data from Binance ───────────────────\n");
   const candles = await fetchCandles(CONFIG.symbol, CONFIG.timeframe, 500);
   const closes = candles.map((c) => c.close);
   const price = closes[closes.length - 1];
@@ -1319,7 +1302,8 @@ async function run() {
   const recentExit = [...log.trades].reverse().find(t => t.type === "EXIT" && t.symbol === CONFIG.symbol);
   if (recentExit) {
     const msSinceExit = Date.now() - new Date(recentExit.timestamp).getTime();
-    const cooldownMs = 2 * timeframeToMs(CONFIG.timeframe);
+    const cooldownCandles = parseInt(process.env.RE_ENTRY_COOLDOWN_CANDLES || "2");
+    const cooldownMs = cooldownCandles * timeframeToMs(CONFIG.timeframe);
     if (msSinceExit < cooldownMs) {
       const waitMin = Math.round((cooldownMs - msSinceExit) / 60000);
       console.log(`\n⏳ RE-ENTRY GUARD — last exit ${Math.round(msSinceExit / 60000)}m ago, ${waitMin}m cooldown remaining`);
